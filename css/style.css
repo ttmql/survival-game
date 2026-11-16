@@ -184,6 +184,14 @@ button {
   min-width: 0;
 }
 
+.brand-name-en {
+  color: #b7b08c;
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: 11px;
+  letter-spacing: 0.14em;
+  line-height: 1.4;
+}
+
 .kicker,
 .panel-kicker {
   color: var(--gold);
@@ -2485,6 +2493,32 @@ kbd {
   font-family: var(--font-serif);
   font-size: 12px;
   letter-spacing: 0.14em;
+}
+
+.start-name-en {
+  display: flex;
+  align-items: center;
+  gap: clamp(12px, 2vw, 22px);
+  margin: 0 0 22px;
+  color: #cbbd8e;
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: clamp(17px, 2.2vw, 25px);
+  font-weight: 400;
+  letter-spacing: 0.14em;
+  line-height: 1.4;
+  white-space: nowrap;
+}
+
+.start-name-en::before,
+.start-name-en::after {
+  content: "";
+  width: clamp(18px, 4vw, 56px);
+  height: 1px;
+  background: linear-gradient(90deg, transparent, rgba(203, 189, 142, 0.42));
+}
+
+.start-name-en::after {
+  transform: scaleX(-1);
 }
 
 .start-screen-controls {
