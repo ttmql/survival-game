@@ -1,0 +1,471 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <meta name="theme-color" content="#0d1511">
+  <meta name="description" content="一个由程序即时生成的无边界二维沙盒世界：岩石、草地与海洋。">
+  <title>悠然求生 · 程序化沙盒</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%23121e18'/%3E%3Crect x='6' y='6' width='9' height='9' rx='2' fill='%236f9e4e'/%3E%3Crect x='17' y='6' width='9' height='9' rx='2' fill='%2361a9af'/%3E%3Crect x='6' y='17' width='9' height='9' rx='2' fill='%2388877b'/%3E%3Crect x='17' y='17' width='9' height='9' rx='2' fill='%23d6b871'/%3E%3C/svg%3E">
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body class="start-mode">
+  <div class="atmosphere" aria-hidden="true"></div>
+
+  <div class="page">
+    <header class="topbar">
+      <div class="brand">
+        <span class="brand-tiles" aria-hidden="true">
+          <i class="tile tile-grass"></i>
+          <i class="tile tile-ocean"></i>
+          <i class="tile tile-rock"></i>
+          <i class="tile tile-gold"></i>
+        </span>
+        <span class="brand-copy">
+          <span class="kicker">PROCEDURAL SANDBOX</span>
+          <h1>悠然求生</h1>
+        </span>
+      </div>
+      <div class="topbar-note">
+        <span class="live-dot" aria-hidden="true"></span>
+        <span>本地实时生成</span>
+        <span class="note-divider" aria-hidden="true"></span>
+        <span class="version">原型 · 001</span>
+      </div>
+    </header>
+
+    <!-- ============================================================= -->
+  <!-- 游戏卡片：HUD、视口、小地图、状态面板、装备栏与所有弹窗            -->
+  <!-- ============================================================= -->
+  <main class="layout">
+      <section class="game-card" aria-label="游戏画面">
+        <!-- 顶部 HUD：地形、时钟、坐标 -->
+        <div class="game-hud">
+          <div class="terra-chip" id="terrainChip" data-terrain="grass">
+            <span class="terra-dot" aria-hidden="true"></span>
+            <span class="terra-label">脚下</span>
+            <strong id="terrainName">草地</strong>
+          </div>
+
+          <div class="game-clock" id="gameClockBox" data-phase="dawn" aria-label="游戏时间：第 1 天 06:00，清晨">
+            <span class="clock-orb" aria-hidden="true"></span>
+            <span class="clock-day" id="dayCount">第 1 天</span>
+            <span class="clock-time" id="gameClock">06:00</span>
+            <span class="clock-phase" id="phaseLabel">清晨</span>
+          </div>
+
+          <div class="hud-right">
+            <div class="coord-readout" id="coordReadout" aria-label="当前位置">X +0000 · Y +0000</div>
+            <span class="view-size">视野 24 × 15 格</span>
+            <span class="compass" aria-label="北">N<span class="compass-arrow">↑</span></span>
+          </div>
+        </div>
+
+        <!-- 主视口：游戏画布 + 潜行滤镜 + 小地图 + 状态面板 -->
+        <div class="viewport" id="viewport">
+          <canvas id="game" width="480" height="300" role="img" aria-label="俯视二维世界，玩家始终位于画面中央。使用 WASD 或方向键移动。">
+            你的浏览器需要支持 Canvas 2D 才能运行这个游戏。
+          </canvas>
+          <div class="dive-overlay" aria-hidden="true"></div>
+
+          <p id="foodRestriction" hidden style="position:absolute;left:14px;top:210px;color:#efd69a;background:#18291ee6;padding:8px;border-radius:6px;z-index:12;font-size:12px"></p>
+          <aside class="minimap-panel" id="minimapPanel" aria-label="附近小地图">
+            <div class="minimap-head">
+              <span>附近</span>
+              <span class="minimap-hint">M 大地图</span>
+            </div>
+            <canvas id="minimap" width="132" height="88" aria-label="记录附近地形与复活点方向的小地图"></canvas>
+          </aside>
+
+          <section class="vitals-panel" id="vitalsPanel" aria-label="角色状态">
+            <div class="vitals-head">
+              <span class="state-pill" id="statePill" data-state="land">
+                <span class="state-dot" aria-hidden="true"></span>
+                <span id="stateLabel">陆地</span>
+              </span>
+              <span class="vitals-caption">VITALS</span>
+            </div>
+
+            <div class="vital-row">
+              <span class="vital-icon health-icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24" width="13" height="13" fill="currentColor">
+                  <path d="M12 20.6 4.9 14c-2.4-2.3-2.2-6.2.5-8.2 2.1-1.6 5-1 6.6 1.1 1.6-2.1 4.5-2.7 6.6-1.1 2.7 2 2.9 5.9.5 8.2L12 20.6Z"/>
+                </svg>
+              </span>
+              <div class="vital-main">
+                <div class="vital-meta">
+                  <span>生命</span>
+                  <span class="vital-value" id="healthValue">100 / 100</span>
+                </div>
+                <div class="vital-track" id="healthTrack" role="progressbar" aria-label="生命值" aria-valuemin="0" aria-valuemax="100" aria-valuenow="100">
+                  <span class="vital-fill health-fill" id="healthFill"></span>
+                </div>
+              </div>
+            </div>
+
+            <div class="vital-row">
+              <span class="vital-icon oxygen-icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.5">
+                  <circle cx="12" cy="8" r="3.4"/>
+                  <circle cx="7" cy="14.5" r="2"/>
+                  <circle cx="16.5" cy="16" r="1.4"/>
+                </svg>
+              </span>
+              <div class="vital-main">
+                <div class="vital-meta">
+                  <span>氧气</span>
+                  <span class="vital-value" id="oxygenValue">10.0 / 10</span>
+                </div>
+                <div class="vital-track" id="oxygenTrack" role="progressbar" aria-label="氧气值" aria-valuemin="0" aria-valuemax="10" aria-valuenow="10">
+                  <span class="vital-fill oxygen-fill" id="oxygenFill"></span>
+                </div>
+              </div>
+            </div>
+            <div class="vital-row">
+              <span class="vital-icon satiety-icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.5">
+                  <path d="M5 19c3-4 7-8 11-11l3 3c-3 4-7 8-11 11z"/>
+                  <path d="M15 5c2-2 4-2 5-1s1 3-1 5l-2 2-3-3z"/>
+                </svg>
+              </span>
+              <div class="vital-main">
+                <div class="vital-meta">
+                  <span>饱食度</span>
+                  <span class="vital-value" id="satietyValue">100 / 100</span>
+                </div>
+                <div class="vital-track" id="satietyTrack" role="progressbar" aria-label="饱食度" aria-valuemin="0" aria-valuemax="100" aria-valuenow="100">
+                  <span class="vital-fill satiety-fill" id="satietyFill"></span>
+                </div>
+              </div>
+            </div>
+          </section>
+
+          <!-- 底部装备栏 + 背包按钮 -->
+          <div class="inventory-dock" id="inventoryDock">
+            <div class="hotbar" id="hotbar" role="group" aria-label="装备栏"></div>
+            <button class="bag-button" id="bagButton" type="button" aria-label="打开背包" aria-expanded="false" aria-controls="backpackOverlay">
+              <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M7 8V6a5 5 0 0 1 10 0v2"/>
+                <rect x="4" y="8" width="16" height="12" rx="2.2"/>
+                <path d="M8 12h8M8 16h5"/>
+              </svg>
+              <span>背包</span>
+            </button>
+          </div>
+
+          <!-- 物品说明浮层（装备栏/背包点击时显示） -->
+          <div class="item-detail" id="itemDetail" hidden>
+            <div class="item-detail-head">
+              <strong id="itemDetailName">物品</strong>
+              <span id="itemDetailType">材料</span>
+            </div>
+            <p id="itemDetailDescription"></p>
+            <div class="item-detail-count">数量 <strong id="itemDetailCount">1</strong> / <span id="itemDetailMax">10</span></div>
+            <div class="item-detail-count" id="itemDetailDurabilityRow" hidden>耐久 <strong id="itemDetailDurability">0</strong> / <span id="itemDetailDurabilityMax">0</span></div>
+          </div>
+
+          <!-- 背包弹窗 -->
+          <div class="backpack-overlay" id="backpackOverlay" hidden>
+            <section class="backpack-panel" role="dialog" aria-modal="true" aria-labelledby="backpackTitle">
+              <div class="backpack-head">
+                <div>
+                  <button id="sortBackpack" class="exit-button" type="button" style="margin-right:12px">整理</button>
+                  <span class="panel-kicker">INVENTORY</span>
+                  <h2 id="backpackTitle">背包</h2>
+                </div>
+                <button class="exit-button" id="closeBackpack" type="button">退出</button>
+              </div>
+              <div class="backpack-grid" id="backpackGrid"></div>
+            </section>
+          </div>
+
+          <!-- 工具台制作弹窗 -->
+          <div class="workbench-overlay" id="workbenchOverlay" hidden>
+            <section class="workbench-panel" role="dialog" aria-modal="true" aria-labelledby="workbenchTitle">
+              <div class="workbench-head">
+                <div>
+                  <span class="panel-kicker">CRAFTING</span>
+                  <h2 id="workbenchTitle">工具台</h2>
+                </div>
+                <button class="exit-button" id="closeWorkbench" type="button">退出</button>
+              </div>
+              <div class="recipe-list" id="recipeList"></div>
+              <p class="workbench-feedback" id="workbenchFeedback" aria-live="polite"></p>
+            </section>
+          </div>
+
+          <!-- 储物箱弹窗（4×8，箱子 ↔ 背包） -->
+          <div class="storage-overlay" id="storageOverlay" hidden>
+            <section class="storage-panel" role="dialog" aria-modal="true" aria-labelledby="storageTitle">
+              <div class="storage-head">
+                <div>
+                  <span class="panel-kicker">STORAGE · 4 × 8</span>
+                  <h2 id="storageTitle">储物箱</h2>
+                </div>
+                <button class="panel-close" id="closeStorage" type="button" aria-label="关闭储物箱">退出</button>
+              </div>
+              <p class="storage-hint">点击箱子物品取回背包，点击背包物品放入箱子。</p>
+              <div class="storage-grid" id="chestGrid" role="group" aria-label="储物箱格子"></div>
+              <h3 class="storage-subtitle">背包</h3>
+              <div class="storage-grid" id="chestBackpackGrid" role="group" aria-label="背包格子"></div>
+            </section>
+          </div>
+
+          <!-- 熔炼炉弹窗（装备栏 + 背包取料） -->
+          <div class="furnace-overlay" id="furnaceOverlay" hidden>
+            <section class="furnace-panel" role="dialog" aria-modal="true" aria-labelledby="furnaceTitle">
+              <div class="storage-head">
+                <div>
+                  <span class="panel-kicker">FURNACE</span>
+                  <h2 id="furnaceTitle">熔炼炉</h2>
+                </div>
+                <button class="panel-close" id="closeFurnace" type="button" aria-label="关闭熔炼炉">退出</button>
+              </div>
+              <div class="furnace-fuel">燃料：小煤块 × <strong id="furnaceFuel">0</strong></div>
+              <p class="storage-hint">点击装备栏或背包里的小煤块添加燃料；再点击一个炼材，消耗 1 个小煤块进行熔炼。</p>
+              <p class="furnace-section-title">装备栏</p>
+              <div class="storage-grid" id="furnaceEquipmentGrid" role="group" aria-label="熔炼炉装备栏格子"></div>
+              <p class="furnace-section-title">背包</p>
+              <div class="storage-grid" id="furnaceBackpackGrid" role="group" aria-label="熔炼炉背包格子"></div>
+              <p class="furnace-feedback" id="furnaceFeedback"></p>
+            </section>
+          </div>
+
+          <!-- 石碑铭文弹窗 -->
+          <div class="stele-overlay" id="steleOverlay" hidden>
+            <section class="stele-panel" role="dialog" aria-modal="true" aria-labelledby="steleTitle">
+              <div class="stele-panel-head">
+                <span class="panel-kicker">TABLET</span>
+                <button class="exit-button" id="closeStele" type="button">退出</button>
+              </div>
+              <div class="stele-monument">
+                <div class="stele-cap" aria-hidden="true"></div>
+                <div class="stele-stone">
+                  <h2 id="steleTitle">夸赞斌神的石碑</h2>
+                  <div class="stele-text" id="steleText"></div>
+                </div>
+                <div class="stele-base" aria-hidden="true"></div>
+              </div>
+            </section>
+          </div>
+
+          <div class="game-toast" id="gameToast" hidden></div>
+          <div class="sleep-overlay" id="sleepOverlay" hidden>
+            <div class="sleep-message">睡觉中<span class="sleep-dots">…</span></div>
+          </div>
+
+          <div class="vignette" aria-hidden="true"></div>
+          <div class="scanlines" aria-hidden="true"></div>
+          <div class="scene-flash" id="sceneFlash" aria-hidden="true"></div>
+
+          <div class="start-hint" id="startHint">
+            <span class="hint-keys"><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd></span>
+            <span>开始漫游</span>
+          </div>
+        </div>
+
+        <footer class="game-footer">
+          <div class="control-group">
+            <span class="key-row" aria-hidden="true">
+              <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd>
+            </span>
+            <span class="control-text">或方向键移动</span>
+          </div>
+          <div class="control-group">
+            <kbd class="wide-key">SHIFT</kbd>
+            <span class="control-text">按住疾行</span>
+          </div>
+          <div class="control-group">
+            <kbd class="wide-key">长按</kbd>
+            <span class="control-text">鼠标挖掘</span>
+          </div>
+          <div class="control-group map-control">
+            <kbd>M</kbd>
+            <span class="control-text">地图</span>
+          </div>
+          <div class="control-group center-lock">
+            <span class="lock-mark" aria-hidden="true"></span>
+            <span class="control-text">镜头锁定 · 玩家居中</span>
+          </div>
+        </footer>
+      </section>
+
+      <aside class="sidebar" aria-label="世界信息">
+        <section class="panel seed-panel">
+          <div class="panel-heading">
+            <div>
+              <span class="panel-kicker">WORLD SEED</span>
+              <h2>世界种子</h2>
+            </div>
+            <span class="panel-index">01</span>
+          </div>
+
+          <code class="seed-code" id="seedCode">0000 0000</code>
+          <button class="world-button" id="newWorldBtn" type="button">
+            <span class="button-glyph" aria-hidden="true">
+              <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M21 12a9 9 0 1 1-2.64-6.36"></path>
+                <path d="M21 3v6h-6"></path>
+              </svg>
+            </span>
+            <span>生成新世界</span>
+            <kbd>N</kbd>
+          </button>
+          <p class="panel-note">每一次生成，都是一片没有被记录过的土地。</p>
+        </section>
+
+        <section class="panel">
+          <div class="panel-heading">
+            <div>
+              <span class="panel-kicker">TERRAIN MIX</span>
+              <h2>地形构成</h2>
+            </div>
+            <span class="ratio-badge">3 : 5 : 2</span>
+          </div>
+
+          <div class="terrain-bar" aria-hidden="true">
+            <span class="bar-rock" style="width:30%"></span>
+            <span class="bar-grass" style="width:50%"></span>
+            <span class="bar-ocean" style="width:20%"></span>
+          </div>
+
+          <ul class="legend">
+            <li>
+              <span class="legend-swatch swatch-rock" aria-hidden="true"></span>
+              <span class="legend-name">岩石</span>
+              <span class="legend-rule"></span>
+              <span class="legend-percent">30%</span>
+            </li>
+            <li>
+              <span class="legend-swatch swatch-grass" aria-hidden="true"></span>
+              <span class="legend-name">草地</span>
+              <span class="legend-rule"></span>
+              <span class="legend-percent">50%</span>
+            </li>
+            <li>
+              <span class="legend-swatch swatch-ocean" aria-hidden="true"></span>
+              <span class="legend-name">海洋</span>
+              <span class="legend-rule"></span>
+              <span class="legend-percent">20%</span>
+            </li>
+          </ul>
+
+          <p class="panel-note">种子生成时自动校准，让三种地形稳定贴近目标占比。</p>
+        </section>
+
+        <section class="panel stats-panel">
+          <div class="panel-heading compact">
+            <div>
+              <span class="panel-kicker">FIELD NOTES</span>
+              <h2>世界札记</h2>
+            </div>
+            <span class="panel-index">03</span>
+          </div>
+          <dl class="world-facts">
+            <div>
+              <dt>地图边界</dt>
+              <dd>无边界 · 随脚步生成</dd>
+            </div>
+            <div>
+              <dt>视野范围</dt>
+              <dd>24 × 15 格</dd>
+            </div>
+            <div>
+              <dt>世界状态</dt>
+              <dd><span class="mini-dot"></span>永久程序化</dd>
+            </div>
+          </dl>
+        </section>
+      </aside>
+    </main>
+
+    <!-- 世界地图弹窗（M 键切换） -->
+    <div class="map-overlay" id="mapOverlay" hidden>
+      <section class="map-page" role="dialog" aria-modal="true" aria-labelledby="mapTitle">
+        <div class="map-page-head">
+          <div>
+            <span class="panel-kicker">EXPLORED WORLD</span>
+            <h2 id="mapTitle">世界地图</h2>
+          </div>
+          <button class="exit-button" id="closeMap" type="button">关闭 M</button>
+        </div>
+        <div class="map-stage">
+          <canvas id="worldMap" width="960" height="600" aria-label="已探索世界地图，可拖动查看"></canvas>
+        </div>
+        <div class="map-legend">
+          <span><i class="map-key map-key-player"></i>你</span>
+          <span><i class="map-key map-key-respawn"></i>复活点</span>
+          <span id="mapRespawnCoords">复活点：—</span>
+          <span id="mapExploredCount">已探索 0 格</span>
+          <span class="map-drag-hint">按住拖动地图</span>
+        </div>
+      </section>
+    </div>
+
+    <div id="pauseOverlay" hidden style="position:fixed;inset:0;z-index:1000;background:#08110dcc;backdrop-filter:blur(4px);color:#eee5cf;text-align:center;padding-top:30vh">
+      <h2 style="font-size:32px">游戏已暂停</h2><p>按空格继续游戏</p><button id="resumeGame" class="exit-button" type="button">继续游戏</button>
+    </div>
+    <!-- 死亡弹窗（有复活点可复活，无则重开） -->
+    <div class="death-overlay" id="deathOverlay" hidden>
+      <section class="death-panel" role="dialog" aria-modal="true" aria-labelledby="deathTitle">
+        <span class="death-kicker">YOU DIED</span>
+        <h2 id="deathTitle" aria-live="polite">你死了</h2>
+        <p>背包和装备栏里的物品已经掉落在原地。</p>
+        <p class="death-hint" id="deathHint">在复活点重新醒来。</p>
+        <p class="death-hint death-no-respawn" id="deathNoRespawn" hidden>没有复活点 · 游戏结束</p>
+        <button class="death-button" id="respawnButton" type="button">复活</button>
+        <button class="death-button death-restart" id="deathNewGameBtn" type="button" hidden>重新开始</button>
+      </section>
+    </div>
+
+    <footer class="page-footer">
+      <span>岩石 · 草地 · 海洋</span>
+      <span>Canvas 2D / 浏览器本地生成</span>
+    </footer>
+  </div>
+
+  <!-- 全屏开始页（点击新游戏后进入游戏模式） -->
+  <div class="start-screen" id="startScreen">
+    <div class="start-screen-grid" aria-hidden="true"></div>
+    <div class="start-screen-brand">
+      <span class="start-kicker">PROCEDURAL SANDBOX</span>
+      <h1>悠然求生</h1>
+      <p>一片没有被记录过的土地，正等待第一步。</p>
+    </div>
+
+    <div class="start-screen-controls">
+      <label class="start-seed-label" for="seedInput">
+        世界种子
+        <span>可选 · 留空随机生成</span>
+      </label>
+      <input
+        class="start-seed-input"
+        id="seedInput"
+        type="text"
+        autocomplete="off"
+        spellcheck="false"
+        placeholder="支持中文、英文、数字，无长度限制"
+        aria-label="世界种子，可选，支持中文英文和数字"
+      >
+      <p class="start-seed-hint">中文 / English / 123 · 不输入则由系统随机生成</p>
+      <button class="start-game-button" id="startGameBtn" type="button">新游戏</button>
+    </div>
+  </div>
+
+  <noscript>
+    <div class="noscript">这个世界需要 JavaScript 才能展开。</div>
+  </noscript>
+
+  <!-- 脚本加载顺序决定 Wilds 命名空间的累积顺序（先加载基础常量，后加载依赖它们的模块） -->
+  <script src="js/config.js" defer></script>
+  <script src="js/buildings.js" defer></script>
+  <script src="js/time.js" defer></script>
+  <script src="js/world.js" defer></script>
+  <script src="js/player.js" defer></script>
+  <script src="js/inventory.js" defer></script>
+  <script src="js/renderer.js" defer></script>
+  <script src="js/audio.js" defer></script>
+  <script src="js/game.js" defer></script>
+</body>
+</html>
