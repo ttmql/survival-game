@@ -1,0 +1,12 @@
+.chrome-test/
+.chrome-cdp/
+.chrome-cdp-*/
+.chrome-test-*/
+screenshots/browser-*.png
+.desktop-build/
+dist/
+node_modules/
+*.log
+.env
+.env.*
+!.env.example
