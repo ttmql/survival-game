@@ -100,4 +100,106 @@ test("furnace cooks pork from either inventory area and consumes fuel", () => {
     assert.equal(g.inventory.countItem("cooked_pork"), 1); assert.equal(g.furnaceObject.fuel, 0);
   }
 });
+test("enderman stays neutral until its real silhouette is hovered, including the head", () => {
+  const g = game(), mob = g.spawnMob("enderman", 4, 0);
+  g.wanderMob = () => {}; g.canMonsterAggro = () => true;
+  assert.equal(mob.health, 90);
+  g.updateMobs(0, 0); assert.equal(mob.aggro, false); assert.equal(g.player.health, 100);
+  g.pointerInside = true;
+  g.getPointerWorldPosition = () => ({ x: mob.x, y: mob.y - 12 });
+  g.storageOpen = true; g.updateMobs(0, 0); assert.equal(mob.provoked, false);
+  g.storageOpen = false;
+  // Empty space between the legs or above the head is not the model.
+  g.getPointerWorldPosition = () => ({ x: mob.x, y: mob.y + 3 });
+  g.updateMobs(0, 0); assert.equal(mob.provoked, false);
+  g.getPointerWorldPosition = () => ({ x: mob.x, y: mob.y - 26 });
+  g.updateMobs(0, 0);
+  assert(mob.provoked); assert(mob.aggro); assert.equal(g.player.health, 70);
+  assert.equal(mob.x, g.player.x); assert.equal(mob.y, g.player.y - 20);
+});
+
+test("only player damage provokes enderman, with immediate blink and no retaliation after lethal damage", () => {
+  const g = game(), mob = g.spawnMob("enderman", 4, 0);
+  g.canMonsterAggro = () => true;
+  g.damageMob(mob, 10, "monster"); assert.equal(mob.provoked, false); assert.equal(g.player.health, 100);
+  g.damageMob(mob, 10); assert(mob.provoked); assert.equal(g.player.health, 70); assert.equal(mob.health, 70);
+  const dying = g.spawnMob("enderman", 5, 0);
+  g.damageMob(dying, 90); assert(dying.dying); assert.equal(g.player.health, 70);
+});
+
+test("enderman blinks behind all four facings and updates collision safe position", () => {
+  for (const [facing, x, y] of [["down", 10, -10], ["up", 10, 30], ["left", 30, 10], ["right", -10, 10]]) {
+    const g = game(), mob = g.spawnMob("enderman", 4, 0);
+    g.canMonsterAggro = () => true; g.player.facing = facing; g.provokeEnderman(mob, 0);
+    assert.equal(mob.x, x); assert.equal(mob.y, y);
+    assert.equal(mob.lastSafeX, x); assert.equal(mob.lastSafeY, y);
+    assert.equal(mob.blinkCooldown, 8); assert.equal(mob.attackAt, 1000);
+  }
+});
+
+test("enderman repeats its skill at eight simulation seconds and keeps normal melee between blinks", () => {
+  const g = game(), mob = g.spawnMob("enderman", 4, 0);
+  g.canMonsterAggro = () => true; g.moveMob = () => {}; g.player.health = 1000;
+  g.provokeEnderman(mob, 0); assert.equal(g.player.health, 970);
+  g.player.facing = "right";
+  g.updateMobs(1, 1000); assert.equal(g.player.health, 940); assert.equal(mob.blinkCooldown, 7);
+  mob.attackAt = Infinity;
+  g.updateMobs(6.99, 7990); assert.equal(mob.x, 10); assert.equal(g.player.health, 940);
+  g.updateMobs(0.02, 8010); assert.equal(mob.x, -10); assert.equal(mob.y, 10);
+  assert.equal(g.player.health, 910); assert.equal(mob.blinkCooldown, 8);
+});
+
+test("enderman teleports past intervening walls and searches beyond occupied adjacent cells", () => {
+  const g = game(), mob = g.spawnMob("enderman", 4, 0);
+  g.canMonsterAggro = () => true; mob.aggro = true;
+  g.mobCanOccupy = x => x < 45 || x > 65;
+  assert(g.tryEndermanBlink(mob, 0)); assert.equal(mob.x, 10); assert.equal(mob.y, -10);
+  mob.x = 90; mob.y = 10; mob.blinkCooldown = 0; g.player.health = 100; g.mobCanOccupy = () => true;
+  for (const [tx, ty] of [[0,-1],[-1,0],[1,0],[-1,-1],[1,-1],[0,1],[-1,1],[1,1]]) g.spawnMob("pig", tx, ty);
+  assert(g.tryEndermanBlink(mob, 1000)); assert.equal(Math.hypot(mob.x - 10, mob.y - 10), 40);
+  assert.equal(g.player.health, 100, "A distant landing must not inflict ranged melee damage");
+  mob.blinkCooldown = 0; g.mobs = [mob]; g.canMonsterAggro = () => false;
+  assert.equal(g.tryEndermanBlink(mob, 0), false); assert.equal(mob.blinkCooldown, 0);
+});
+
+test("enderman searches for the nearest landing beyond multiple blocked rings", () => {
+  const g = game(), mob = g.spawnMob("enderman", 8, 0);
+  g.canMonsterAggro = () => true; mob.aggro = true;
+  g.mobCanOccupy = (x, y) => Math.hypot(x - 10, y - 10) >= 59;
+  assert(g.tryEndermanBlink(mob, 0)); assert.equal(Math.hypot(mob.x - 10, mob.y - 10), 60);
+  assert.equal(g.player.health, 100); assert.equal(mob.blinkCooldown, 8);
+});
+
+test("blocked rear landing falls back to a neighbouring cell and only successful blinks make sound", () => {
+  const g = game(), mob = g.spawnMob("enderman", 4, 0);
+  let sounds = 0;
+  g.audio = { playEndermanBlink() { sounds++; }, playPlayerHurt() {} };
+  g.canMonsterAggro = () => true; g.mobCanOccupy = (x, y) => y >= 0;
+  g.provokeEnderman(mob, 0);
+  assert.equal(Math.abs(mob.x - 10), 20); assert.equal(mob.y, 10); assert.equal(g.player.health, 70); assert.equal(sounds, 1);
+  assert.equal(g.tryEndermanBlink(mob, 1), false); assert.equal(sounds, 1);
+  mob.blinkCooldown = 0; g.mobCanOccupy = () => false;
+  assert.equal(g.tryEndermanBlink(mob, 1000), false); assert.equal(sounds, 1);
+});
+
+test("neutral enderman does not switch combat music, while a provoked one does", () => {
+  const g = game(), mob = g.spawnMob("enderman", 4, 0), scenes = [];
+  g.wanderMob = () => {}; g.canMonsterAggro = () => true;
+  g.started = true; g.clock.phase = { key: "night" }; g.audio = { playPlayerHurt() {}, update(scene) { scenes.push(scene); } };
+  g.updateMobs(0, 0); g.updateAudio(1000); assert.equal(scenes.at(-1).combat, false);
+  g.provokeEnderman(mob, 1000); g.updateAudio(1000); assert.equal(scenes.at(-1).combat, true);
+});
+test("hidden enderman silhouettes do not provoke and lethal melee names the killer", () => {
+  const g = game(), mob = g.spawnMob("enderman", 4, 0);
+  const foreground = { type: "wall" };
+  g.placedObjects = new Map([["wall", foreground]]);
+  g.renderer = {
+    mobOccluders: () => [foreground],
+    fixtureBounds: () => ({ left: 80, right: 100, top: -30, bottom: 30 }),
+  };
+  assert.equal(g.endermanHovered(mob, { x: 90, y: -16 }), false);
+  g.renderer = null; g.canMonsterAggro = () => true;
+  g.player.health = 30; g.provokeEnderman(mob, 0);
+  assert.equal(g.player.health, 0); assert.equal(g.deathReasonText(), "你被【末影人】击败了");
+});
 console.log(`\n${passed} creature integration checks passed`);

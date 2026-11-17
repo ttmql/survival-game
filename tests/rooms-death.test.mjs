@@ -151,6 +151,13 @@ test("perimeter walls and corners belong to the room and their lamps do not ligh
   assert.equal(g.isPositionLitBySource(-10,30),false);
   assert.equal(g.isPositionLitBySource(30,30),true);
 });
+test("portal illumination stays within its own closed or open region",()=>{
+ const g=game();house(g);
+ g.portalEffects=[{age:0,ends:[{x:30,y:30}]}];
+ assert(g.isPositionLitBySource(30,30));assert(!g.isPositionLitBySource(-10,30));
+ g.portalEffects=[{age:0,ends:[{x:-10,y:30}]}];
+ assert(g.isPositionLitBySource(-30,30));assert(!g.isPositionLitBySource(30,30));
+});
 test("shark aggro does not trigger battle music but monster aggro still does",()=>{
  const g=game();g.started=true;g.combatMusicUntil=0;let input;g.audio={update(value){input=value;}};
  const shark=g.spawnMob("shark",4,0);shark.aggro=true;g.updateAudio(1000);assert.equal(input.combat,false);

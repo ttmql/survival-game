@@ -586,6 +586,22 @@
   // slightly ahead of the audio clock; `setScene` fades between tracks.
   // -------------------------------------------------------------------
 
+    createVoiceNode(voice, kind) {
+      const node = this.ctx[kind]();
+      voice.nodes.push(node);
+      this.activeAudioNodes = (this.activeAudioNodes || 0) + 1;
+      if (kind === "createOscillator" || kind === "createBufferSource") {
+        voice.active++;
+        node.addEventListener("ended", () => {
+          if (--voice.active) return;
+          for (const finished of voice.nodes) finished.disconnect();
+          this.activeAudioNodes -= voice.nodes.length;
+          voice.nodes.length = 0;
+        }, { once: true });
+      }
+      return node;
+    }
+
     tick() {
       if (!this.ctx || !this.scene) return;
       if (this.ctx.state !== "running") return;
@@ -593,6 +609,8 @@
       if (!track) return;
       const stepDuration = 60 / track.tempo / 2;
       const horizon = this.ctx.currentTime + 0.25;
+      // Background/slow frames must not replay a backlog of already-expired notes.
+      if (this.nextNoteTime < this.ctx.currentTime - 0.1) this.nextNoteTime = this.ctx.currentTime + 0.04;
       let guard = 0;
       while (this.nextNoteTime < horizon && guard < 28) {
         const swingOffset = track.swing && this.step % 2 === 1 ? stepDuration * track.swing : 0;
@@ -604,11 +622,12 @@
     }
 
     note(frequency, when, duration, wave, volume, options = {}) {
+      const audioVoice = { nodes: [], active: 0 };
       if (!this.ctx || !this.musicGain) return;
       const pan = options.pan || 0;
-      const output = this.ctx.createGain();
+      const output = this.createVoiceNode(audioVoice, "createGain");
       const panner = typeof this.ctx.createStereoPanner === "function"
-        ? this.ctx.createStereoPanner()
+        ? this.createVoiceNode(audioVoice, "createStereoPanner")
         : null;
       output.gain.setValueAtTime(0.0001, when);
       output.gain.linearRampToValueAtTime(volume, when + 0.018);
@@ -622,19 +641,19 @@
       }
 
       const oscillators = [];
-      const first = this.ctx.createOscillator();
+      const first = this.createVoiceNode(audioVoice, "createOscillator");
       first.type = wave;
       first.frequency.setValueAtTime(frequency, when);
       oscillators.push(first);
       if (options.fat) {
-        const second = this.ctx.createOscillator();
+        const second = this.createVoiceNode(audioVoice, "createOscillator");
         second.type = wave;
         second.frequency.setValueAtTime(frequency, when);
         second.detune.setValueAtTime(6, when);
         oscillators.push(second);
       }
       for (const oscillator of oscillators) {
-        const level = this.ctx.createGain();
+        const level = this.createVoiceNode(audioVoice, "createGain");
         level.gain.value = 1 / oscillators.length;
         oscillator.connect(level);
         level.connect(output);
@@ -752,15 +771,16 @@
     }
 
     stringNote(frequency, when, duration, volume, pan, role) {
+      const audioVoice = { nodes: [], active: 0 };
       if (!this.ctx || !this.musicGain) return;
       const attack = role === "pad" ? 0.52 : 0.24;
-      const output = this.ctx.createGain();
-      const filter = this.ctx.createBiquadFilter();
+      const output = this.createVoiceNode(audioVoice, "createGain");
+      const filter = this.createVoiceNode(audioVoice, "createBiquadFilter");
       filter.type = "lowpass";
       filter.frequency.setValueAtTime(role === "pad" ? 1150 : 1750, when);
       filter.Q.value = 0.42;
       const panner = typeof this.ctx.createStereoPanner === "function"
-        ? this.ctx.createStereoPanner()
+        ? this.createVoiceNode(audioVoice, "createStereoPanner")
         : null;
       output.gain.setValueAtTime(0.0001, when);
       output.gain.linearRampToValueAtTime(volume, when + attack);
@@ -781,8 +801,8 @@
         { detune: 6, type: "triangle", level: 0.42 },
       ];
       for (const voice of voices) {
-        const oscillator = this.ctx.createOscillator();
-        const level = this.ctx.createGain();
+        const oscillator = this.createVoiceNode(audioVoice, "createOscillator");
+        const level = this.createVoiceNode(audioVoice, "createGain");
         oscillator.type = voice.type;
         oscillator.frequency.setValueAtTime(frequency, when);
         oscillator.detune.setValueAtTime(voice.detune, when);
@@ -795,10 +815,11 @@
     }
 
     pianoNote(frequency, when, duration, volume, pan, role) {
+      const audioVoice = { nodes: [], active: 0 };
       if (!this.ctx || !this.musicGain) return;
-      const output = this.ctx.createGain();
+      const output = this.createVoiceNode(audioVoice, "createGain");
       const panner = typeof this.ctx.createStereoPanner === "function"
-        ? this.ctx.createStereoPanner()
+        ? this.createVoiceNode(audioVoice, "createStereoPanner")
         : null;
       output.gain.setValueAtTime(0.0001, when);
       output.gain.linearRampToValueAtTime(volume, when + 0.008);
@@ -817,8 +838,8 @@
         { ratio: 3, wave: "sine", level: 0.08 },
       ];
       for (const harmonic of harmonics) {
-        const oscillator = this.ctx.createOscillator();
-        const level = this.ctx.createGain();
+        const oscillator = this.createVoiceNode(audioVoice, "createOscillator");
+        const level = this.createVoiceNode(audioVoice, "createGain");
         oscillator.type = harmonic.wave;
         oscillator.frequency.setValueAtTime(frequency * harmonic.ratio, when);
         oscillator.detune.setValueAtTime(2, when);
@@ -831,10 +852,11 @@
     }
 
     malletNote(frequency, when, duration, volume, pan, role) {
+      const audioVoice = { nodes: [], active: 0 };
       if (!this.ctx || !this.musicGain) return;
-      const output = this.ctx.createGain();
+      const output = this.createVoiceNode(audioVoice, "createGain");
       const panner = typeof this.ctx.createStereoPanner === "function"
-        ? this.ctx.createStereoPanner()
+        ? this.createVoiceNode(audioVoice, "createStereoPanner")
         : null;
       output.gain.setValueAtTime(volume, when);
       output.gain.exponentialRampToValueAtTime(0.0001, when + Math.min(0.8, Math.max(0.12, duration * 0.75)));
@@ -846,8 +868,8 @@
         output.connect(this.musicGain);
       }
       for (const [ratio, level] of [[1, 0.8], [4, 0.18]]) {
-        const oscillator = this.ctx.createOscillator();
-        const gain = this.ctx.createGain();
+        const oscillator = this.createVoiceNode(audioVoice, "createOscillator");
+        const gain = this.createVoiceNode(audioVoice, "createGain");
         oscillator.type = "sine";
         oscillator.frequency.setValueAtTime(frequency * ratio, when);
         gain.gain.value = level;
@@ -859,14 +881,15 @@
     }
 
     synthNote(frequency, when, duration, volume, pan, role) {
+      const audioVoice = { nodes: [], active: 0 };
       if (!this.ctx || !this.musicGain) return;
-      const output = this.ctx.createGain();
-      const filter = this.ctx.createBiquadFilter();
+      const output = this.createVoiceNode(audioVoice, "createGain");
+      const filter = this.createVoiceNode(audioVoice, "createBiquadFilter");
       filter.type = "lowpass";
       filter.frequency.setValueAtTime(role === "pad" ? 1400 : 2600, when);
       filter.Q.value = 0.9;
       const panner = typeof this.ctx.createStereoPanner === "function"
-        ? this.ctx.createStereoPanner()
+        ? this.createVoiceNode(audioVoice, "createStereoPanner")
         : null;
       output.gain.setValueAtTime(0.0001, when);
       output.gain.linearRampToValueAtTime(volume, when + (role === "pad" ? 0.18 : 0.02));
@@ -879,7 +902,7 @@
       } else {
         output.connect(this.musicGain);
       }
-      const oscillator = this.ctx.createOscillator();
+      const oscillator = this.createVoiceNode(audioVoice, "createOscillator");
       oscillator.type = role === "bass" ? "triangle" : "square";
       oscillator.frequency.setValueAtTime(frequency, when);
       oscillator.detune.setValueAtTime(-3, when);
@@ -889,14 +912,15 @@
     }
 
     bell(when, frequency, volume) {
+      const audioVoice = { nodes: [], active: 0 };
       if (!this.ctx || !this.musicGain) return;
-      const output = this.ctx.createGain();
+      const output = this.createVoiceNode(audioVoice, "createGain");
       output.gain.setValueAtTime(volume, when);
       output.gain.exponentialRampToValueAtTime(0.0001, when + 0.9);
       output.connect(this.musicGain);
       for (const [ratio, level] of [[1, 0.7], [2.76, 0.18], [5.4, 0.06]]) {
-        const oscillator = this.ctx.createOscillator();
-        const gain = this.ctx.createGain();
+        const oscillator = this.createVoiceNode(audioVoice, "createOscillator");
+        const gain = this.createVoiceNode(audioVoice, "createGain");
         oscillator.type = "sine";
         oscillator.frequency.setValueAtTime(frequency * ratio, when);
         gain.gain.value = level;
@@ -948,9 +972,10 @@
     }
 
     kick(when, volume) {
+      const audioVoice = { nodes: [], active: 0 };
       if (!this.ctx) return;
-      const oscillator = this.ctx.createOscillator();
-      const gain = this.ctx.createGain();
+      const oscillator = this.createVoiceNode(audioVoice, "createOscillator");
+      const gain = this.createVoiceNode(audioVoice, "createGain");
       oscillator.type = "sine";
       oscillator.frequency.setValueAtTime(125, when);
       oscillator.frequency.exponentialRampToValueAtTime(42, when + 0.14);
@@ -963,14 +988,15 @@
     }
 
     snare(when, volume) {
+      const audioVoice = { nodes: [], active: 0 };
       if (!this.ctx || !this.noiseBuffer) return;
-      const source = this.ctx.createBufferSource();
+      const source = this.createVoiceNode(audioVoice, "createBufferSource");
       source.buffer = this.noiseBuffer;
-      const filter = this.ctx.createBiquadFilter();
+      const filter = this.createVoiceNode(audioVoice, "createBiquadFilter");
       filter.type = "bandpass";
       filter.frequency.value = 1700;
       filter.Q.value = 0.8;
-      const gain = this.ctx.createGain();
+      const gain = this.createVoiceNode(audioVoice, "createGain");
       gain.gain.setValueAtTime(volume, when);
       gain.gain.exponentialRampToValueAtTime(0.0001, when + 0.11);
       source.connect(filter);
@@ -979,8 +1005,8 @@
       source.start(when);
       source.stop(when + 0.12);
 
-      const tone = this.ctx.createOscillator();
-      const toneGain = this.ctx.createGain();
+      const tone = this.createVoiceNode(audioVoice, "createOscillator");
+      const toneGain = this.createVoiceNode(audioVoice, "createGain");
       tone.type = "triangle";
       tone.frequency.setValueAtTime(190, when);
       toneGain.gain.setValueAtTime(volume * 0.45, when);
@@ -992,13 +1018,14 @@
     }
 
     hat(when, volume) {
+      const audioVoice = { nodes: [], active: 0 };
       if (!this.ctx || !this.noiseBuffer) return;
-      const source = this.ctx.createBufferSource();
+      const source = this.createVoiceNode(audioVoice, "createBufferSource");
       source.buffer = this.noiseBuffer;
-      const filter = this.ctx.createBiquadFilter();
+      const filter = this.createVoiceNode(audioVoice, "createBiquadFilter");
       filter.type = "highpass";
       filter.frequency.value = 5200;
-      const gain = this.ctx.createGain();
+      const gain = this.createVoiceNode(audioVoice, "createGain");
       gain.gain.setValueAtTime(volume, when);
       gain.gain.exponentialRampToValueAtTime(0.0001, when + 0.045);
       source.connect(filter);
@@ -1009,9 +1036,10 @@
     }
 
     tom(when) {
+      const audioVoice = { nodes: [], active: 0 };
       if (!this.ctx) return;
-      const oscillator = this.ctx.createOscillator();
-      const gain = this.ctx.createGain();
+      const oscillator = this.createVoiceNode(audioVoice, "createOscillator");
+      const gain = this.createVoiceNode(audioVoice, "createGain");
       oscillator.type = "sine";
       oscillator.frequency.setValueAtTime(150, when);
       oscillator.frequency.exponentialRampToValueAtTime(90, when + 0.12);
@@ -1024,9 +1052,10 @@
     }
 
     softPulse(when, duration) {
+      const audioVoice = { nodes: [], active: 0 };
       if (!this.ctx) return;
-      const oscillator = this.ctx.createOscillator();
-      const gain = this.ctx.createGain();
+      const oscillator = this.createVoiceNode(audioVoice, "createOscillator");
+      const gain = this.createVoiceNode(audioVoice, "createGain");
       oscillator.type = "sine";
       oscillator.frequency.setValueAtTime(72, when);
       gain.gain.setValueAtTime(0.0001, when);
@@ -1039,15 +1068,16 @@
     }
 
     noiseBurst(when, duration, volume, frequency, type = "bandpass", attack = 0) {
+      const audioVoice = { nodes: [], active: 0 };
       if (!this.ctx || !this.noiseBuffer) return;
-      const source = this.ctx.createBufferSource();
+      const source = this.createVoiceNode(audioVoice, "createBufferSource");
       source.buffer = this.noiseBuffer;
       source.playbackRate.value = 0.65 + Math.random() * 0.5;
-      const filter = this.ctx.createBiquadFilter();
+      const filter = this.createVoiceNode(audioVoice, "createBiquadFilter");
       filter.type = type;
       filter.frequency.setValueAtTime(frequency, when);
       filter.frequency.exponentialRampToValueAtTime(Math.max(120, frequency * 0.35), when + duration);
-      const gain = this.ctx.createGain();
+      const gain = this.createVoiceNode(audioVoice, "createGain");
       gain.gain.setValueAtTime(attack > 0 ? 0.0001 : volume, when);
       if (attack > 0) gain.gain.linearRampToValueAtTime(volume, when + Math.min(attack, duration * 0.5));
       gain.gain.exponentialRampToValueAtTime(0.0001, when + duration);
@@ -1064,10 +1094,11 @@
     // -------------------------------------------------------------------
 
     actionTone(frequency, duration, wave, volume, slideTo = null, delay = 0) {
+      const audioVoice = { nodes: [], active: 0 };
       if (!this.ctx || !this.sfxGain) return;
       const when = this.ctx.currentTime + delay;
-      const oscillator = this.ctx.createOscillator();
-      const gain = this.ctx.createGain();
+      const oscillator = this.createVoiceNode(audioVoice, "createOscillator");
+      const gain = this.createVoiceNode(audioVoice, "createGain");
       oscillator.type = wave;
       oscillator.frequency.setValueAtTime(frequency, when);
       if (slideTo !== null) {
@@ -1128,16 +1159,17 @@
     }
 
     playWaterFlow() {
+      const audioVoice = { nodes: [], active: 0 };
       if (!this.ctx || !this.noiseBuffer || this.muted) return;
       const now = this.ctx.currentTime;
       if (now < (this.nextWaterFlowAt || 0)) return;
       this.nextWaterFlowAt = now + 0.3;
-      const source = this.ctx.createBufferSource(); source.buffer = this.waterFlowBuffer();
+      const source = this.createVoiceNode(audioVoice, "createBufferSource"); source.buffer = this.waterFlowBuffer();
       source.loop = true; source.playbackRate.value = 1;
-      const low = this.ctx.createBiquadFilter(); low.type = "lowpass"; low.frequency.value = 1800; low.Q.value = 0.35;
-      const high = this.ctx.createBiquadFilter(); high.type = "highpass"; high.frequency.value = 90; high.Q.value = 0.35;
+      const low = this.createVoiceNode(audioVoice, "createBiquadFilter"); low.type = "lowpass"; low.frequency.value = 1800; low.Q.value = 0.35;
+      const high = this.createVoiceNode(audioVoice, "createBiquadFilter"); high.type = "highpass"; high.frequency.value = 90; high.Q.value = 0.35;
       // Overlapping liquid movement with a soft onset, never a per-step impact.
-      const gain = this.ctx.createGain();
+      const gain = this.createVoiceNode(audioVoice, "createGain");
       gain.gain.setValueAtTime(0, now);
       gain.gain.linearRampToValueAtTime(0.09, now + 0.16);
       gain.gain.linearRampToValueAtTime(0.055, now + 0.38);
@@ -1215,6 +1247,40 @@
       this.actionTone(135,0.04,"sine",0.025*level,70);
     }
 
+    playEndermanBlink() {
+      this.actionSounds.endermanBlink = (this.actionSounds.endermanBlink || 0) + 1;
+      if (!this.ctx || this.muted) return;
+      const now = this.ctx.currentTime;
+      // Keep a group of simultaneous blinks from producing an abrupt volume spike.
+      if (now < (this.nextEndermanBlinkAt || 0)) return;
+      this.nextEndermanBlinkAt = now + 0.08;
+      this.noiseBurst(now, 0.22, 0.075, 1800, "bandpass", 0.015);
+      this.actionTone(240, 0.12, "sine", 0.09, 980);
+      this.actionTone(780, 0.2, "sine", 0.075, 150, 0.06);
+    }
+
+    playPortalOpen() {
+      this.actionSounds.portalOpen = (this.actionSounds.portalOpen || 0) + 1;
+      if (!this.ctx || this.muted) return;
+      const now = this.ctx.currentTime;
+      if (now < (this.nextPortalOpenAt || 0)) return;
+      this.nextPortalOpenAt = now + 0.08;
+      this.noiseBurst(now, 0.45, 0.07, 650, "lowpass", 0.04);
+      this.actionTone(95, 0.4, "sine", 0.13, 180);
+      this.actionTone(320, 0.32, "sine", 0.055, 120, 0.06);
+    }
+
+    playPortalSwap() {
+      this.actionSounds.portalSwap = (this.actionSounds.portalSwap || 0) + 1;
+      if (!this.ctx || this.muted) return;
+      const now = this.ctx.currentTime;
+      if (now < (this.nextPortalSwapAt || 0)) return;
+      this.nextPortalSwapAt = now + 0.08;
+      this.noiseBurst(now, 0.22, 0.1, 1500, "bandpass", 0.012);
+      this.actionTone(180, 0.09, "sine", 0.1, 720);
+      this.actionTone(650, 0.23, "sine", 0.09, 65, 0.04);
+    }
+
     playGiftLand() {
       this.actionSounds.giftLand=(this.actionSounds.giftLand||0)+1;
       if (!this.ctx || this.muted) return;
@@ -1232,12 +1298,13 @@
     }
 
     playRespawnStele() {
+      const audioVoice = { nodes: [], active: 0 };
       if (!this.beginAction("respawn")) return;
       const now = this.ctx.currentTime;
       const notes = [392, 523.25, 659.25, 783.99];
       notes.forEach((frequency, index) => {
-        const oscillator = this.ctx.createOscillator();
-        const gain = this.ctx.createGain();
+        const oscillator = this.createVoiceNode(audioVoice, "createOscillator");
+        const gain = this.createVoiceNode(audioVoice, "createGain");
         oscillator.type = "sine";
         oscillator.frequency.setValueAtTime(frequency, now);
         gain.gain.setValueAtTime(0.0001, now);
@@ -1266,12 +1333,13 @@
     }
 
     playMonsterHurt() {
+      const audioVoice = { nodes: [], active: 0 };
       this.monsterHurtCount += 1;
       if (this.muted || !this.ctx || !this.sfxGain) return;
       try {
         const now = this.ctx.currentTime;
-        const low = this.ctx.createOscillator();
-        const lowGain = this.ctx.createGain();
+        const low = this.createVoiceNode(audioVoice, "createOscillator");
+        const lowGain = this.createVoiceNode(audioVoice, "createGain");
         low.type = "sawtooth";
         low.frequency.setValueAtTime(185, now);
         low.frequency.exponentialRampToValueAtTime(62, now + 0.38);
@@ -1282,8 +1350,8 @@
         low.start(now);
         low.stop(now + 0.46);
 
-        const growl = this.ctx.createOscillator();
-        const growlGain = this.ctx.createGain();
+        const growl = this.createVoiceNode(audioVoice, "createOscillator");
+        const growlGain = this.createVoiceNode(audioVoice, "createGain");
         growl.type = "square";
         growl.frequency.setValueAtTime(96, now + 0.02);
         growl.frequency.exponentialRampToValueAtTime(43, now + 0.32);
@@ -1301,12 +1369,13 @@
     }
 
     playPlayerHurt() {
+      const audioVoice = { nodes: [], active: 0 };
       this.playerHurtCount += 1;
       if (this.muted || !this.ctx || !this.sfxGain) return;
       try {
         const now = this.ctx.currentTime;
-        const tone = this.ctx.createOscillator();
-        const gain = this.ctx.createGain();
+        const tone = this.createVoiceNode(audioVoice, "createOscillator");
+        const gain = this.createVoiceNode(audioVoice, "createGain");
         tone.type = "square";
         tone.frequency.setValueAtTime(320, now);
         tone.frequency.exponentialRampToValueAtTime(120, now + 0.24);
@@ -1317,8 +1386,8 @@
         tone.start(now);
         tone.stop(now + 0.3);
 
-        const low = this.ctx.createOscillator();
-        const lowGain = this.ctx.createGain();
+        const low = this.createVoiceNode(audioVoice, "createOscillator");
+        const lowGain = this.createVoiceNode(audioVoice, "createGain");
         low.type = "triangle";
         low.frequency.setValueAtTime(160, now);
         low.frequency.exponentialRampToValueAtTime(70, now + 0.2);

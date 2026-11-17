@@ -174,7 +174,7 @@ test("crafting an axe consumes exactly five wood and creates a full-durability t
   assert(result.ok === true, "craft succeeded");
   assert(inventory.countItem("wood") === 1, "exactly five wood consumed");
   const axe = inventory.equipment.find((entry) => entry && entry.itemId === "wood_axe");
-  assert(axe && axe.durability === 15, "axe starts at max durability");
+  assert(axe && axe.durability === 30, "axe starts at max durability");
 });
 
 test("crafting a stone sword consumes the requested materials", () => {
@@ -187,7 +187,7 @@ test("crafting a stone sword consumes the requested materials", () => {
   assert(inventory.countItem("wood") === 0, "wood consumed");
   assert(inventory.countItem("rock") === 0, "rock consumed");
   const sword = slot(inventory, "equipment", 0);
-  assert(sword && sword.itemId === "stone_sword" && sword.durability === 60, "sword durability");
+  assert(sword && sword.itemId === "stone_sword" && sword.durability === 120, "sword durability");
 });
 
 test("crafting without enough materials changes nothing", () => {
@@ -260,12 +260,14 @@ test("tool durability, speed, attack and placement metadata match the request", 
   assert(ITEMS.respawn_stele.placeType === "respawn_stele", "respawn stele is placeable");
 
   const expected = {
-    wood_axe: [15, "axe", 1],
-    stone_axe: [30, "axe", 1.5],
-    wood_pickaxe: [15, "pickaxe", 1],
-    stone_pickaxe: [30, "pickaxe", 1.5],
-    wood_shovel: [15, "shovel", 1],
-    stone_shovel: [30, "shovel", 1.5],
+    wood_axe: [30, "axe", 1],
+    stone_axe: [60, "axe", 1.5],
+    wood_pickaxe: [30, "pickaxe", 1],
+    stone_pickaxe: [60, "pickaxe", 1.5],
+    wood_shovel: [30, "shovel", 1],
+    stone_shovel: [60, "shovel", 1.5],
+    wood_hoe: [30, "hoe", 1],
+    stone_hoe: [60, "hoe", 1],
   };
   for (const [id, [durability, toolType, speed]] of Object.entries(expected)) {
     const item = ITEMS[id];
@@ -274,8 +276,8 @@ test("tool durability, speed, attack and placement metadata match the request", 
     assert(item.speedMultiplier === speed, id + " speed");
   }
 
-  assert(ITEMS.wood_sword.maxDurability === 30 && ITEMS.wood_sword.attackBonus === 10, "wood sword");
-  assert(ITEMS.stone_sword.maxDurability === 60 && ITEMS.stone_sword.attackBonus === 15, "stone sword");
+  assert(ITEMS.wood_sword.maxDurability === 60 && ITEMS.wood_sword.attackBonus === 10, "wood sword");
+  assert(ITEMS.stone_sword.maxDurability === 120 && ITEMS.stone_sword.attackBonus === 15, "stone sword");
   assert(ITEMS.torch.description === "材料，怕黑不老铁", "torch description");
   assert(ITEMS.stele.description === "斌神的强大震古烁今", "stele description");
   assert(ITEMS.stele.steleText.includes("他是在替这个宇宙维护正确性。"), "stele inscription");

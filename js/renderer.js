@@ -105,13 +105,14 @@
       this.world = world;
     }
 
-    render(player, time, lighting, drops, target, placedObjects, mobs, projectiles, roomIndex = null, giftEffects = [], farm = new Map(), waterEffects = []) {
+    render(player, time, lighting, drops, target, placedObjects, mobs, projectiles, roomIndex = null, giftEffects = [], farm = new Map(), waterEffects = [], portalEffects = []) {
       if (!this.world) return;
 
       const ctx = this.ctx;
       const world = this.world;
       const seed = world.seed;
       this.roomIndex = roomIndex;
+      this.portalLights = Wilds.portalLightSources(portalEffects);
       this.viewerRoom = roomIndex?.at(player.tileX, player.tileY) || null;
       this.buildingTiles = new Map();
       for (const object of placedObjects || []) {
@@ -122,13 +123,13 @@
         }
       }
       this.transparentRoofTiles = Wilds.Buildings.transparentRoofs(placedObjects || [], player.tileX, player.tileY);
-      const camX = player.x - CENTER_X;
-      const camY = player.y - CENTER_Y;
+      const camX = player.x + (player.cameraOffset?.x || 0) - CENTER_X;
+      const camY = player.y + (player.cameraOffset?.y || 0) - CENTER_Y;
 
       // These fields make the centre-lock invariant observable in the
       // browser without changing how the frame is drawn.
-      this.playerScreenX = CENTER_X;
-      this.playerScreenY = CENTER_Y;
+      this.playerScreenX = player.x - camX;
+      this.playerScreenY = player.y - camY;
       this.cameraX = camX;
       this.cameraY = camY;
 
@@ -212,8 +213,9 @@
       }
 
       this.drawFarming(farm,camX,camY);
-      // Features are a second pass so canopies can overlap the terrain
-      // around them. Terrain itself is never removed.
+      // Embedded minerals sit below floors. Trees join the depth-sorted
+      // foreground so northern fixtures cannot cover a southern canopy.
+      this.naturalFixtures = [];
       for (let row = 0; row < rows; row += 1) {
         const tileY = firstY + row;
         const sy = Math.round(tileY * TILE - camY);
@@ -227,7 +229,7 @@
           const sx = Math.round(tileX * TILE - camX);
 
           if (feature === FEATURE.TREE) {
-            this.drawTree(tileX, tileY, sx, sy, seed);
+            this.naturalFixtures.push({type:"tree",tx:tileX,ty:tileY});
           } else if (feature === FEATURE.SILICA) {
             this.drawSilica(sx,sy);
           } else if (feature === FEATURE.COAL) {
@@ -236,6 +238,7 @@
         }
       }
 
+      const sceneFixtures = [...(placedObjects || []), ...this.naturalFixtures];
       if (player.isDiving) {
         this.drawDiveBubbles(displayTime);
       }
@@ -243,6 +246,7 @@
       // Floors are flush with ground; arrows and creatures pass above them.
       this.drawFloors(placedObjects || [], camX, camY);
       this.drawGiftEffects(giftEffects,camX,camY);
+      this.drawPortals(portalEffects, camX, camY, false);
       if (projectiles && projectiles.length > 0) {
         this.drawProjectiles(projectiles, camX, camY);
       }
@@ -257,15 +261,15 @@
       foreground.clearRect(0,0,VIEW_W,VIEW_H);foreground.imageSmoothingEnabled=false;
       this.ctx=foreground;
       try {
-      if (placedObjects && placedObjects.length > 0) {
-        this.drawPlacedObjects(placedObjects, camX, camY, displayTime);
+      if (sceneFixtures.length > 0) {
+        this.drawPlacedObjects(sceneFixtures, camX, camY, displayTime);
       }
 
       if (mobs && mobs.length > 0) {
-        this.drawMobsWithOcclusion(mobs, placedObjects || [], camX, camY, displayTime);
+        this.drawMobsWithOcclusion(mobs, sceneFixtures, camX, camY, displayTime);
       }
 
-      this.drawPlayerWithOcclusion(player, placedObjects || [], camX, camY, displayTime);
+      this.drawPlayerWithOcclusion(player, sceneFixtures, camX, camY, displayTime);
 
       // Drawn above the player so a drop created on the player's own
       // tile is still visible on the ground. Ground drops also sit above
@@ -279,24 +283,17 @@
       this.drawWaterEffects(waterEffects,camX,camY);
       } finally {this.ctx=ctx;}
       ctx.drawImage(this.foregroundCanvas,0,0);
-      if (roomIndex?.closedRooms.length) {
-        if (!this.unlitSceneCanvas) {
-          this.unlitSceneCanvas = document.createElement("canvas");
-          this.unlitSceneCanvas.width = VIEW_W*this.renderScale; this.unlitSceneCanvas.height = VIEW_H*this.renderScale;
-        }
-        const unlit = this.unlitSceneCanvas.getContext("2d");
-        unlit.clearRect(0, 0, this.unlitSceneCanvas.width, this.unlitSceneCanvas.height); unlit.drawImage(this.canvas, 0, 0);
-      }
-      const outdoorSources = (placedObjects || []).filter(o => !roomIndex?.at(o.tx, o.ty));
-      this.drawLighting(lighting, outdoorSources, camX, camY, displayTime);
-      this.drawEnclosedLighting(roomIndex, placedObjects || [], camX, camY, displayTime);
+      this.drawSceneLighting(lighting, sceneFixtures, roomIndex, camX, camY, displayTime);
+      this.drawPortals(portalEffects, camX, camY, true);
+      this.drawPortalUnits(player, mobs || [], camX, camY, displayTime);
 
       if (target) {
-        if (target.kind === "gift") this.drawGiftPreview(target,camX,camY);
+        if (target.kind === "portal") this.drawPortalPreview(target, camX, camY, displayTime);
+        else if (target.kind === "gift") this.drawGiftPreview(target,camX,camY);
         else if (target.kind === "placement") this.drawPlacementPreview(target, camX, camY, displayTime);
         else this.drawMiningTarget(target, camX, camY);
       }
-      this.drawHDProjectiles(projectiles||[],camX,camY,lighting,outdoorSources,roomIndex,displayTime);
+      this.drawHDProjectiles(projectiles||[],camX,camY,lighting,this.outdoorSources,roomIndex,displayTime);
     }
 
     // -------------------------------------------------------------------
@@ -308,6 +305,100 @@
       ctx.fillStyle="#fff";ctx.fillRect(x-radius,y-radius,radius*2,radius*2);
       if(this.blgImage?.complete && this.blgImage.naturalWidth){ctx.imageSmoothingEnabled=true;ctx.drawImage(this.blgImage,x-radius,y-radius,radius*2,radius*2);}
       ctx.restore();
+    }
+
+    drawPortalDisc(x, y, radius, age, flash, rimOnly = false) {
+      const ctx = this.ctx, palette = Wilds.PORTAL_PALETTE;
+      ctx.save(); ctx.translate(x, y); ctx.rotate(age * 2.8);
+      if (!rimOnly) {
+        const glow = ctx.createRadialGradient(0, 0, 1, 0, 0, radius);
+        glow.addColorStop(0, palette.core); glow.addColorStop(0.7, palette.body); glow.addColorStop(1, palette.edge);
+        ctx.fillStyle = glow; ctx.beginPath(); ctx.arc(0, 0, radius, 0, Math.PI * 2); ctx.fill();
+      }
+      // Smooth rim illumination and a few broken wave rings make rotation visible.
+      const rim = ctx.createLinearGradient(-radius, 0, radius, 0);
+      rim.addColorStop(0, palette.body); rim.addColorStop(0.65, palette.edge); rim.addColorStop(1, flash ? palette.glow : palette.edge);
+      ctx.strokeStyle = rim; ctx.lineWidth = flash ? 2 : 1;
+      ctx.beginPath(); ctx.arc(0, 0, radius - 1, 0, Math.PI * 2); ctx.stroke();
+      if (flash && rimOnly) {
+        // Stay at full brightness from the preparation burst until the portals vanish.
+        ctx.save(); ctx.globalCompositeOperation = "screen";
+        const lightRadius = radius * 1.8;
+        const light = ctx.createRadialGradient(0, 0, 0, 0, 0, lightRadius);
+        // The centre stays almost black: the flash radiates from the lip, not a blue-filled disc.
+        light.addColorStop(0, "rgba(31,77,174,0)");
+        light.addColorStop(0.5, "rgba(31,77,174,0)");
+        light.addColorStop(0.56, "rgba(99,150,229,0.9)");
+        light.addColorStop(0.74, "rgba(30,72,159,0.38)");
+        light.addColorStop(1, "rgba(19,49,117,0)");
+        ctx.fillStyle = light; ctx.beginPath(); ctx.arc(0, 0, lightRadius, 0, Math.PI * 2); ctx.fill();
+        ctx.strokeStyle = "#80a9e5"; ctx.lineWidth = 1.5;
+        ctx.beginPath(); ctx.arc(0, 0, radius - 1, 0, Math.PI * 2); ctx.stroke();
+        ctx.restore();
+      }
+      ctx.save(); ctx.lineWidth = 0.8;
+      ctx.strokeStyle = flash ? "rgba(44,76,140,0.7)" : "rgba(24,45,91,0.7)";
+      for (let i = 0; i < 3; i++) {
+        const waveRadius = radius * (0.28 + i * 0.22 + Math.sin(age * 2 + i) * 0.025);
+        const start = i * 2.1 + age * (i % 2 ? -0.4 : 0.3);
+        ctx.beginPath();ctx.ellipse(0, 0, waveRadius, waveRadius * 0.92, i * 0.2, start, start + Math.PI * 1.35);ctx.stroke();
+      }
+      ctx.restore();
+      ctx.restore();
+    }
+
+    drawPortals(effects, camX, camY, rimOnly) {
+      for (const cast of effects) for (const end of cast.ends) {
+        const x = end.x - camX, y = end.y - camY;
+        if (x < -40 || x > VIEW_W + 40 || y < -40 || y > VIEW_H + 40) continue;
+        this.ctx.save();
+        this.drawPortalDisc(x, y, cast.radius, cast.age, cast.age >= Wilds.PORTAL_TIMING.PREPARE, rimOnly);
+        this.ctx.restore();
+      }
+    }
+
+    drawPortalPreview(target, camX, camY, time) {
+      const ctx = this.ctx;
+      for (const end of [target.origin, target].filter(Boolean)) {
+        const x = end.x - camX, y = end.y - camY;
+        ctx.save(); ctx.globalAlpha = 0.3;
+        this.drawPortalDisc(x, y, target.radius, time, false);
+        ctx.globalAlpha = 0.95; ctx.lineWidth = 1.5;
+        ctx.strokeStyle = target.valid ? "#7df7a1" : "#ff646f";
+        ctx.setLineDash([3, 2]); ctx.beginPath(); ctx.arc(x, y, target.radius, 0, Math.PI * 2); ctx.stroke();
+        ctx.restore();
+      }
+    }
+
+    drawPortalSilhouette(draw, x, y) {
+      if (!this.portalSpriteCanvas) {
+        this.portalSpriteCanvas = document.createElement("canvas"); this.portalOutlineCanvas = document.createElement("canvas");
+        for (const canvas of [this.portalSpriteCanvas, this.portalOutlineCanvas]) { canvas.width = 64; canvas.height = 64; }
+      }
+      const original = this.ctx, sprite = this.portalSpriteCanvas.getContext("2d"), outline = this.portalOutlineCanvas.getContext("2d");
+      sprite.clearRect(0, 0, 64, 64); outline.clearRect(0, 0, 64, 64);
+      sprite.save(); sprite.translate(32 - x, 44 - y);
+      try { this.ctx = sprite; draw(); } finally { this.ctx = original; sprite.restore(); }
+      // Dilate the actual sprite alpha, then subtract its interior: no filled body remains.
+      outline.save();
+      for (const [dx, dy] of [[-1,-1],[0,-1],[1,-1],[-1,0],[1,0],[-1,1],[0,1],[1,1]]) outline.drawImage(this.portalSpriteCanvas, dx, dy);
+      outline.globalCompositeOperation = "destination-out"; outline.drawImage(this.portalSpriteCanvas, 0, 0);
+      outline.globalCompositeOperation = "source-in"; outline.fillStyle = Wilds.PORTAL_PALETTE.edge; outline.fillRect(0, 0, 64, 64);
+      outline.restore();
+      original.drawImage(this.portalOutlineCanvas, x - 32, y - 44);
+    }
+
+    drawPortalUnits(player, mobs, camX, camY, time) {
+      const ctx = this.ctx;
+      for (const mob of mobs) {
+        if (!mob.portalFrozen || mob.dying) continue;
+        const x = Math.round(mob.x - camX), y = Math.round(mob.y - camY);
+        if (x < -40 || x > VIEW_W + 40 || y < -40 || y > VIEW_H + 40) continue;
+        ctx.save(); ctx.translate(x, y);
+        this.drawPortalSilhouette(() => this.drawMobBody({ ...mob, blinkFlash: 0 }, time), 0, 0);
+        ctx.restore();
+      }
+      if (player.portalFrozen) this.drawPortalSilhouette(() => this.drawPlayer(player, true), this.playerScreenX, this.playerScreenY);
     }
 
     drawFarming(farm,camX,camY) {
@@ -395,7 +486,7 @@
       for (const object of ordered) {
         const x = Math.round(object.tx * TILE - camX), y = Math.round(object.ty * TILE - camY);
         if (x > VIEW_W + TILE || y > VIEW_H + 40 || x + TILE < -TILE || y + TILE < -40) continue;
-        if (Wilds.Buildings.isBlocking(object)) {
+        if (Wilds.Buildings.isBlocking(object) && object.type !== "tree") {
           ctx.fillStyle = "rgba(10, 18, 12, 0.3)";
           ctx.beginPath(); ctx.ellipse(x + 10, y + 17, 8, 2.4, 0, 0, Math.PI * 2); ctx.fill();
         }
@@ -406,7 +497,8 @@
 
     drawFixedObject(object, camX, camY, time) {
       const x = Math.round(object.tx * TILE - camX), y = Math.round(object.ty * TILE - camY);
-      if (["wall", "wood_door", "wood_fence", "fence_gate"].includes(object.type)) this.drawBuilding(object, x, y);
+      if (object.type === "tree") this.drawTree(object.tx, object.ty, x, y, this.world.seed);
+      else if (["wall", "wood_door", "wood_fence", "fence_gate"].includes(object.type)) this.drawBuilding(object, x, y);
       else if (object.type === "workbench") this.drawPlacedWorkbench(x, y);
       else if (object.type === "torch") {
         const solid = this.buildingsAt(object.tx, object.ty).find(Wilds.Buildings.isBlocking);
@@ -422,6 +514,8 @@
 
     fixtureBounds(object) {
       let height = Wilds.Buildings.height(object);
+      if (object.type === "tree") return {left:object.tx*TILE-1,right:(object.tx+1)*TILE+2,
+        top:object.ty*TILE-height,bottom:(object.ty+1)*TILE+2};
       if (object.type === "torch") {
         const solid = this.buildingsAt(object.tx, object.ty).find(Wilds.Buildings.isBlocking);
         height = (solid ? Wilds.Buildings.height(solid) : 0) + 3;
@@ -834,6 +928,7 @@
     drawMobs(mobs, camX, camY, time) {
       const ctx = this.ctx;
       for (const mob of mobs) {
+        if (mob.portalFrozen && !mob.dying) continue;
         const sx = Math.round(mob.x - camX);
         const sy = Math.round(mob.y - camY);
         if (sx < -30 || sy < -30 || sx > VIEW_W + 30 || sy > VIEW_H + 30) continue;
@@ -860,23 +955,7 @@
           if (flash) ctx.globalAlpha = 0.55;
         }
 
-        if (mob.aquatic) {
-          this.drawAquatic(0,0,mob.type==="shark",time);
-        } else if (mob.type === "sheep") {
-          this.drawSheep(0, 0);
-        } else if (mob.type === "algorithm_chicken") {
-          this.drawChicken(0, 0, time);
-        } else if (mob.type === "pig") {
-          this.drawPig(0, 0);
-        } else if (mob.type === "spider") {
-          this.drawSpider(0, 0, time);
-        } else if (mob.type === "zombie") {
-          this.drawZombie(0, 0);
-        } else if (mob.type === "savage_archer") {
-          this.drawArcher(0, 0);
-        } else if (mob.type === "dark_lucian") {
-          this.drawDarkLucian(0,0,Boolean(mob.culling));
-        }
+        this.drawMobBody(mob, time);
         ctx.restore();
 
         if (mob.dying) {
@@ -899,10 +978,43 @@
         if (!mob.dying && (mob.health < mob.maxHealth || mob.aggro)) {
           const width = 18;
           ctx.fillStyle = "rgba(5, 10, 7, 0.72)";
-          ctx.fillRect(sx - width / 2, sy - 18, width, 3);
+          const healthY = sy - (mob.type === "enderman" ? 35 : 18);
+          ctx.fillRect(sx - width / 2, healthY, width, 3);
           ctx.fillStyle = mob.monster ? "#c96b56" : "#8ac56d";
-          ctx.fillRect(sx - width / 2, sy - 18, width * (mob.health / mob.maxHealth), 3);
+          ctx.fillRect(sx - width / 2, healthY, width * (mob.health / mob.maxHealth), 3);
         }
+        if (!mob.dying && mob.inDeepWater && !mob.aquatic) {
+          ctx.fillStyle = "#0b233e"; ctx.fillRect(sx - 8, sy + 11, 16, 2);
+          ctx.fillStyle = "#65d3ef"; ctx.fillRect(sx - 8, sy + 11, 16 * mob.oxygen / CONFIG.OXYGEN_MAX, 2);
+        }
+      }
+    }
+
+    drawMobBody(mob, time) {
+      const ctx = this.ctx;
+      if (mob.type === "enderman") {
+        if (mob.blinkFlash > 0 && !mob.dying) {
+          ctx.save(); ctx.globalAlpha *= mob.blinkFlash * 0.65;
+          this.drawEnderman(mob.blinkFromX - mob.x, mob.blinkFromY - mob.y, true);
+          ctx.restore();
+        }
+        this.drawEnderman(0, 0, mob.aggro, mob.blinkFlash);
+      } else if (mob.aquatic) {
+        this.drawAquatic(0,0,mob.type==="shark",mob.beached ? 0 : time);
+      } else if (mob.type === "sheep") {
+        this.drawSheep(0, 0);
+      } else if (mob.type === "algorithm_chicken") {
+        this.drawChicken(0, 0, time);
+      } else if (mob.type === "pig") {
+        this.drawPig(0, 0);
+      } else if (mob.type === "spider") {
+        this.drawSpider(0, 0, time);
+      } else if (mob.type === "zombie") {
+        this.drawZombie(0, 0);
+      } else if (mob.type === "savage_archer") {
+        this.drawArcher(0, 0);
+      } else if (mob.type === "dark_lucian") {
+        this.drawDarkLucian(0,0,Boolean(mob.culling));
       }
     }
 
@@ -1010,6 +1122,29 @@
       ctx.fillRect(x + 1, y + 4, 3, 4);
     }
 
+    drawEnderman(x, y, aggro, blinkFlash = 0) {
+      const ctx = this.ctx;
+      ctx.fillStyle = "#171320";
+      for (const [left, top, width, height] of Wilds.ENDERMAN_PARTS) ctx.fillRect(x + left, y + top, width, height);
+      ctx.fillStyle = "#2b2338";
+      ctx.fillRect(x - 3, y - 28, 6, 1); ctx.fillRect(x - 2, y - 19, 1, 10);
+      ctx.fillRect(x - 7, y - 19, 1, 16); ctx.fillRect(x + 5, y - 19, 1, 16);
+      ctx.fillStyle = aggro ? "#eb9cff" : "#b96fe0";
+      ctx.fillRect(x - 3, y - 26, 2, 1); ctx.fillRect(x + 1, y - 26, 2, 1);
+      ctx.fillStyle = "#e4c5f5";
+      ctx.fillRect(x - 2, y - 26, 1, 1); ctx.fillRect(x + 2, y - 26, 1, 1);
+      if (aggro) { ctx.fillStyle = "#08070c"; ctx.fillRect(x - 2, y - 23, 4, 2); }
+      if (blinkFlash > 0) {
+        ctx.save(); ctx.globalAlpha *= Math.min(1, blinkFlash * 3);
+        ctx.fillStyle = "#c77dff";
+        for (let i = 0; i < 7; i++) {
+          const angle = i * 2.4, spread = 5 + (0.4 - blinkFlash) * 24;
+          ctx.fillRect(x + Math.round(Math.cos(angle) * spread), y - 12 + Math.round(Math.sin(angle) * spread), 1, 2);
+        }
+        ctx.restore();
+      }
+    }
+
     drawDarkLucian(x,y,firing) {
       const ctx=this.ctx;
       ctx.fillStyle="#151e30";ctx.beginPath();ctx.moveTo(x-5,y-6);ctx.lineTo(x+5,y-6);ctx.lineTo(x+8,y+5);ctx.lineTo(x-8,y+5);ctx.fill();
@@ -1078,12 +1213,12 @@
       try {
         this.ctx=hd;this.drawProjectiles(visible,camX,camY,true);
         // Lighting stays at 480×300; apply it only to the bullet pixels.
-        this.ctx=light;this.drawLighting(lighting,outdoorSources,camX,camY,time);
+        this.ctx=light;this.drawLighting(lighting,outdoorSources,camX,camY,time,this.portalLightsFor(null,roomIndex));
         for(const room of roomIndex?.closedRooms||[]) {
           light.save();light.beginPath();
           for(const cell of room.cells)light.rect(Math.round(cell.tx*TILE-camX),Math.round(cell.ty*TILE-camY-Wilds.Buildings.WALL_HEIGHT),TILE,TILE+Wilds.Buildings.WALL_HEIGHT);
           light.clip();light.clearRect(0,0,VIEW_W,VIEW_H);
-          this.drawLighting({darkness:.72,warm:0},roomIndex.torchesFor(room),camX,camY,time);
+          this.drawLighting({darkness:.72,warm:0},roomIndex.torchesFor(room),camX,camY,time,this.portalLightsFor(room,roomIndex));
           light.restore();
         }
       } finally {this.ctx=original;}
@@ -1190,15 +1325,37 @@
     // light cuts holes in it with "destination-out", revealing the real
     // terrain underneath. Warm screen light adds sunrise/sunset glow.
     // -------------------------------------------------------------------
-    drawEnclosedLighting(roomIndex, objects, camX, camY, time) {
-      if (!roomIndex?.closedRooms.length || !this.unlitSceneCanvas) return;
+    drawSceneLighting(lighting, objects, roomIndex, camX, camY, time) {
+      const original = this.ctx;
+      const outdoor = objects.filter(o => !roomIndex?.at(o.tx, o.ty));
+      this.outdoorSources = outdoor;
+      const portals = this.portalLightsFor(null,roomIndex);
+      if (lighting.warm > 0.001) {
+        if (!this.unlitSceneCanvas) { this.unlitSceneCanvas=document.createElement("canvas");this.unlitSceneCanvas.width=VIEW_W;this.unlitSceneCanvas.height=VIEW_H; }
+        const unlit=this.unlitSceneCanvas.getContext("2d");unlit.clearRect(0,0,VIEW_W,VIEW_H);unlit.drawImage(original.canvas,0,0,VIEW_W,VIEW_H);
+        this.drawLighting(lighting,outdoor,camX,camY,time,portals);
+        this.drawEnclosedLighting(roomIndex,objects,camX,camY,time);
+        return;
+      }
+      if (!this.sceneLightingCanvas) { this.sceneLightingCanvas=document.createElement("canvas");this.sceneLightingCanvas.width=VIEW_W;this.sceneLightingCanvas.height=VIEW_H; }
+      const mask=this.sceneLightingCanvas.getContext("2d");mask.clearRect(0,0,VIEW_W,VIEW_H);
+      try {
+        this.ctx=mask;
+        this.drawLighting(lighting,outdoor,camX,camY,time,portals);
+        this.drawEnclosedLighting(roomIndex,objects,camX,camY,time,true);
+      } finally { this.ctx=original; }
+      original.drawImage(this.sceneLightingCanvas,0,0);
+    }
+
+    drawEnclosedLighting(roomIndex, objects, camX, camY, time, maskOnly = false) {
+      if (!roomIndex?.closedRooms.length || (!maskOnly && !this.unlitSceneCanvas)) return;
       const ctx = this.ctx, h = Wilds.Buildings.WALL_HEIGHT;
       if (!this.boundaryOutdoorCanvas) {
         this.boundaryOutdoorCanvas = document.createElement("canvas"); this.boundaryRestoreCanvas = document.createElement("canvas");
         for (const canvas of [this.boundaryOutdoorCanvas,this.boundaryRestoreCanvas]) {canvas.width=VIEW_W;canvas.height=VIEW_H;}
       }
       const outdoor=this.boundaryOutdoorCanvas.getContext("2d");
-      outdoor.clearRect(0,0,VIEW_W,VIEW_H);outdoor.drawImage(this.canvas,0,0,VIEW_W,VIEW_H);
+      outdoor.clearRect(0,0,VIEW_W,VIEW_H);outdoor.drawImage(ctx.canvas,0,0,VIEW_W,VIEW_H);
 
       for (const room of roomIndex.closedRooms) {
         const cells = room.cells.filter(tile => tile.tx * TILE >= camX - TILE && tile.tx * TILE <= camX + VIEW_W &&
@@ -1209,8 +1366,9 @@
         ctx.clip();
         // Restore the unlit scene to remove outdoor sunlight and lamps first.
         // The clip also prevents room lamps and their warm glow escaping outside.
-        ctx.drawImage(this.unlitSceneCanvas, 0, 0,VIEW_W,VIEW_H);
-        this.drawLighting({ darkness: 0.72, warm: 0 }, roomIndex.torchesFor(room), camX, camY, time);
+        if (maskOnly) ctx.clearRect(0,0,VIEW_W,VIEW_H);
+        else ctx.drawImage(this.unlitSceneCanvas, 0, 0,VIEW_W,VIEW_H);
+        this.drawLighting({ darkness: 0.72, warm: 0 }, roomIndex.torchesFor(room), camX, camY, time, this.portalLightsFor(room,roomIndex));
         ctx.restore();
       }
       // Region membership includes the perimeter, but its visible wall/door
@@ -1223,11 +1381,17 @@
       const restore=this.boundaryRestoreCanvas.getContext("2d");restore.clearRect(0,0,VIEW_W,VIEW_H);
       try {this.ctx=restore;for(const object of boundaries)this.drawFixedObject(object,camX,camY,time);}
       finally {this.ctx=ctx;}
+      if (maskOnly) { ctx.globalCompositeOperation="destination-out";ctx.drawImage(this.boundaryRestoreCanvas,0,0);ctx.globalCompositeOperation="source-over"; }
       restore.globalCompositeOperation="source-in";restore.drawImage(this.boundaryOutdoorCanvas,0,0);restore.globalCompositeOperation="source-over";
       ctx.drawImage(this.boundaryRestoreCanvas,0,0);
     }
 
-    drawLighting(lighting, placedObjects, camX, camY, time) {
+    portalLightsFor(room, roomIndex = this.roomIndex) {
+      return (this.portalLights || []).filter(light =>
+        (roomIndex?.at(Math.floor(light.x / TILE), Math.floor(light.y / TILE)) || null) === room);
+    }
+
+    drawLighting(lighting, placedObjects, camX, camY, time, portalLights = []) {
       if (!lighting) return;
 
       const ctx = this.ctx;
@@ -1250,7 +1414,7 @@
         lightCtx.fillStyle = "rgba(5, 12, 29, " + lighting.darkness.toFixed(3) + ")";
         lightCtx.fillRect(0, 0, VIEW_W, VIEW_H);
 
-        if (torches.length > 0 || activeRespawns.length > 0) {
+        if (torches.length > 0 || activeRespawns.length > 0 || portalLights.length > 0) {
           lightCtx.globalCompositeOperation = "destination-out";
 
           for (const torch of torches) {
@@ -1282,6 +1446,15 @@
             lightCtx.fillRect(sx - radius, sy - radius, radius * 2, radius * 2);
           }
 
+          for (const portal of portalLights) {
+            const sx = portal.x - camX, sy = portal.y - camY, radius = portal.radius;
+            const hole = lightCtx.createRadialGradient(sx, sy, TILE, sx, sy, radius);
+            hole.addColorStop(0, "rgba(0,0,0," + portal.strength + ")");
+            hole.addColorStop(0.5, "rgba(0,0,0," + portal.strength * 0.8 + ")");
+            hole.addColorStop(1, "rgba(0,0,0,0)");
+            lightCtx.fillStyle = hole;
+            lightCtx.fillRect(sx - radius, sy - radius, radius * 2, radius * 2);
+          }
           lightCtx.globalCompositeOperation = "source-over";
         }
         ctx.drawImage(this.lightCanvas, 0, 0);
@@ -1839,6 +2012,8 @@
         ctx.fillRect(x, y - 4, 3, 1);
         ctx.fillStyle = dark;
         ctx.fillRect(x + 3, y - 2, 2, 1);
+      } else if (definition.id === "enderman_portal") {
+        this.drawPortalDisc(x, y, 6, 0, false);
       } else if (definition.id === "lucian_holy_gun") {
         ctx.fillStyle="#26384e";ctx.fillRect(x-6,y-5,12,4);ctx.fillRect(x-2,y-1,4,7);
         ctx.fillStyle="#bed6e3";ctx.fillRect(x-6,y-5,12,2);ctx.fillRect(x-1,y,2,5);
@@ -1920,6 +2095,9 @@
         ctx.restore();
       } else if(itemId==="blg_gift_box") {
         ctx.fillStyle="#129ba9";ctx.fillRect(x-5,y-3,10,8);ctx.fillStyle="#10c3cf";ctx.fillRect(x-6,y-5,12,3);ctx.fillStyle="#ed4e7a";ctx.fillRect(x-1,y-5,2,10);
+      } else if (itemId === "enderman_portal_fragment") {
+        ctx.fillStyle = "#10182f"; ctx.beginPath(); ctx.moveTo(x-4,y-5); ctx.lineTo(x+3,y-6); ctx.lineTo(x+5,y); ctx.lineTo(x,y+6); ctx.lineTo(x-5,y+2); ctx.closePath(); ctx.fill();
+        ctx.strokeStyle = "#5eacff"; ctx.lineWidth = 1; ctx.beginPath(); ctx.moveTo(x-3,y-4); ctx.lineTo(x,y-1); ctx.lineTo(x-2,y+3); ctx.moveTo(x+2,y-3); ctx.lineTo(x+3,y); ctx.lineTo(x,y+4); ctx.stroke();
       } else if (itemId === "deep_sea_gills") {
         ctx.fillStyle="#703e55";ctx.fillRect(x-3,y-5,6,10);ctx.fillRect(x-5,y-2,10,5);
         ctx.fillStyle="#ce8390";ctx.fillRect(x-2,y-4,4,8);ctx.fillRect(x-4,y-1,8,3);
@@ -2155,8 +2333,8 @@
       for (let i = 0; i < bubbles.length; i += 1) {
         const bubble = bubbles[i];
         const cycle = (time * bubble.speed + bubble.phase) % 1;
-        const x = CENTER_X + bubble.x + Math.sin((time + bubble.phase) * 1.7) * 1.5;
-        const y = CENTER_Y + bubble.y - cycle * 23;
+        const x = (this.playerScreenX ?? CENTER_X) + bubble.x + Math.sin((time + bubble.phase) * 1.7) * 1.5;
+        const y = (this.playerScreenY ?? CENTER_Y) + bubble.y - cycle * 23;
         const alpha = (1 - cycle) * 0.42;
 
         ctx.fillStyle = "rgba(195, 233, 227, " + alpha.toFixed(3) + ")";
@@ -2164,10 +2342,11 @@
       }
     }
 
-    drawPlayer(player) {
+    drawPlayer(player, portalOutline = false) {
+      if (player.portalFrozen && !portalOutline) return;
       const ctx = this.ctx;
-      const cx = CENTER_X;
-      const cy = CENTER_Y;
+      const cx = this.playerScreenX ?? CENTER_X;
+      const cy = this.playerScreenY ?? CENTER_Y;
       const moving = player.moving;
       const phase = this.reduceMotion ? 0 : player.walkPhase * Math.PI * 2;
       const bob = moving && !this.reduceMotion ? (Math.sin(phase * 2) >= 0 ? 0 : -1) : 0;

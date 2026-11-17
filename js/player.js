@@ -24,6 +24,11 @@
       this.moving = false;
       this.walkPhase = 0;
       this.speed = 0;
+      this.portalFrozen = false;
+      this.portalOwner = null;
+      this.cameraOffset = null;
+      this.creative = false;
+      this.fastTravel = false;
 
       this.maxHealth = CONFIG.HEALTH_MAX;
       this.health = this.maxHealth;
@@ -74,6 +79,7 @@
      * tree/wall instead of stopping dead when only one axis is blocked.
      */
     update(dt, axisX, axisY, sprinting) {
+      if (this.portalFrozen) { this.moving = false; this.speed = 0; return; }
       let dx = axisX;
       let dy = axisY;
       const length = Math.hypot(dx, dy);
@@ -88,7 +94,7 @@
       dx /= length;
       dy /= length;
 
-      const targetSpeed = (sprinting ? CONFIG.PLAYER_SPRINT_SPEED : CONFIG.PLAYER_SPEED) * this.speedFactor;
+      const targetSpeed = (sprinting ? CONFIG.PLAYER_SPRINT_SPEED : CONFIG.PLAYER_SPEED) * this.speedFactor * (this.creative && this.fastTravel ? 5 : 1);
       this.speed = targetSpeed;
 
       // Resolve axes independently so the player can slide along a tree.
@@ -148,6 +154,7 @@
      * is handled by Game.updateSurvival using the game clock.
      */
     updateVitals(dt) {
+      if (this.creative) { this.isDiving = this.waterDepth === 2; this.isWading = this.waterDepth === 1; return; }
       // Starvation uses real simulation seconds, just like oxygen/drowning.
       if (this.satiety <= 0) {
         this.takeDamage(dt * CONFIG.STARVATION_DAMAGE_PER_SECOND, { type: "starvation" });
@@ -174,13 +181,14 @@
     // Poison stacks by extending duration and adding total damage, which is
     // then spread evenly across the remaining hours in updateEffects.
     takeDamage(amount, cause = { type: "unknown" }) {
-      if (this.health <= 0 || !Number.isFinite(amount) || amount <= 0) return;
+      if (this.creative || this.portalFrozen || this.health <= 0 || !Number.isFinite(amount) || amount <= 0) return;
       this.health = Math.max(0, this.health - amount);
       // Freeze the actual lethal source; later damage cannot overwrite it.
       if (this.health <= 0) this.deathCause = { ...cause };
     }
 
     applyPoison(damage, gameHours, source = null) {
+      if (this.creative) return;
       const hours = Math.max(0, Number(gameHours) || 0);
       const total = Math.max(0, Number(damage) || 0);
       if (hours <= 0 || total <= 0) return;
@@ -191,6 +199,7 @@
     }
 
     applySlow(gameHours, factor) {
+      if (this.creative) return;
       const hours = Math.max(0, Number(gameHours) || 0);
       if (hours <= 0) return;
       this.slowRemainingHours = Math.max(this.slowRemainingHours, hours);
@@ -202,6 +211,7 @@
      * Durations are in-game hours; `gameHoursDelta` comes from the clock.
      */
     updateEffects(gameHoursDelta) {
+      if (this.creative) return;
       const hours = Math.max(0, Number(gameHoursDelta) || 0);
       if (hours <= 0) return;
       this.manureDietHours = Math.max(0, (this.manureDietHours || 0) - hours);

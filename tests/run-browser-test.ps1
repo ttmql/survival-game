@@ -13,7 +13,7 @@ param(
   [int]$Port = 9333,
   [string]$Seed = "1A2B3C4D",
   [string]$Profile = ".chrome-cdp",
-  [ValidateSet("browser-check.mjs", "buildings-browser.mjs", "rooms-browser.mjs", "water-browser.mjs", "inventory-browser.mjs", "debug-browser.mjs", "gift-browser.mjs", "farming-browser.mjs", "lucian-browser.mjs", "night-browser.mjs")]
+  [ValidateSet("browser-check.mjs", "buildings-browser.mjs", "rooms-browser.mjs", "water-browser.mjs", "inventory-browser.mjs", "debug-browser.mjs", "gift-browser.mjs", "farming-browser.mjs", "lucian-browser.mjs", "night-browser.mjs", "enderman-browser.mjs", "portal-browser.mjs", "performance-browser.mjs", "modes-browser.mjs")]
   [string]$CheckScript = "browser-check.mjs"
 )
 

@@ -233,7 +233,6 @@
 
   function createWorld(rawSeed) {
     const seed = rawSeed >>> 0;
-    const isDebugMap = seed === 0x123456;
     const thresholds = calibrate(seed);
     const cache = new Map();
     const removedFeatures = new Set();
@@ -288,10 +287,6 @@
     }
 
     function terrainAt(tx, ty) {
-      if(isDebugMap && tx>=-40 && tx<=60 && ty>=-40 && ty<=40) {
-        if((tx>=5) || (tx>=-15 && tx<=-13 && ty>=6 && ty<=8))return TERRAIN.OCEAN;
-        return ty>=6?TERRAIN.ROCK:TERRAIN.GRASS;
-      }
       const tileX = Math.floor(tx);
       const tileY = Math.floor(ty);
       const cx = Math.floor(tileX / CHUNK_SIZE);
@@ -326,12 +321,6 @@
       const terrain = terrainAt(x, y);
 
       if (removedFeatures.has(tileKey(x, y))) return FEATURE.NONE;
-      if(isDebugMap && x>=-40 && x<=60 && y>=-40 && y<=40) {
-        if(terrain===TERRAIN.OCEAN)return waterDepthAt(x,y)===2 && x%3===0 && y%3===0?FEATURE.SILICA:FEATURE.NONE;
-        if(x>=-14 && x<=-10 && y>=-6 && y<=-2 && x%2===0 && y%2===0)return FEATURE.TREE;
-        if(terrain===TERRAIN.ROCK && x>=-6 && x<=2 && y>=14 && y<=18 && x%2===0)return FEATURE.COAL;
-        return FEATURE.NONE;
-      }
       if (terrain === TERRAIN.OCEAN) return waterDepthAt(x, y) === 2 && hash2(x, y, seed ^ 0x6a71c932) < 0.08 ? FEATURE.SILICA : FEATURE.NONE;
 
       const field = terrain === TERRAIN.GRASS ? TREE_FIELD : COAL_FIELD;
@@ -439,7 +428,6 @@
      * frame. For most seeds this resolves within a few milliseconds.
      */
     function findSpawn() {
-      if(isDebugMap)return {tx:-1,ty:2,clearing:true};
       let best = null;
 
       const evaluateCenter = (centerX, centerY) => {
@@ -576,7 +564,6 @@
 
     return Object.freeze({
       seed,
-      isDebugMap,
       thresholds,
       terrainAt,
       waterDepthAt,

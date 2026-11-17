@@ -104,4 +104,22 @@ test("raw fish smelts into cooked fish and restores the specified satiety",()=>{
  g.furnaceObject={fuel:1};g.furnaceFeedback={};g.renderFurnace=()=>{};g.useFurnaceSlot("equipment",0);
  assert.equal(g.inventory.countItem("cooked_fish"),1);g.eatFood("equipment",0);assert.equal(g.player.satiety,60);
 });
+test("enderman fears all water while other land monsters can still wade",()=>{
+ const g=waterGame(),mob=g.spawnMob("enderman",0,0);
+ assert(g.mobCanOccupy(10,10,mob));assert(!g.mobCanOccupy(30,10,mob));assert(!g.mobCanOccupy(90,10,mob));
+ assert(g.mobCanOccupy(30,10,{type:"zombie"}));
+ add(g,"driftwood",1,0);assert(!g.mobCanOccupy(30,10,mob));
+});
+test("enderman keeps aggro at the dry shoreline and resumes blinking when the player leaves water",()=>{
+ for(const playerX of [30,70]) {
+   const g=waterGame();g.clock.setTimeOfDay(22);g.player.x=playerX;
+   const mob=g.spawnMob("enderman",-3,0);let sounds=0;
+   g.audio={playEndermanBlink(){sounds++;},playPlayerHurt(){}};g.provokeEnderman(mob,0);
+   for(let i=0;i<100;i++)g.updateMobs(.05,i*50);
+   assert(mob.provoked&&mob.aggro);assert(mob.x>10&&mob.x<15);assert(g.mobCanOccupy(mob.x,mob.y,mob));
+   assert.equal(g.player.health,100);assert.equal(sounds,0);assert.equal(mob.blinkCooldown,0);
+   g.player.x=10;g.player.facing="down";g.updateMobs(.05,5100);
+   assert.equal(sounds,1);assert.equal(mob.blinkCooldown,8);assert.equal(g.player.health,70);
+ }
+});
 console.log(passed+" water checks passed");

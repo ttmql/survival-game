@@ -106,10 +106,13 @@ test('player and monster projectiles pass corpses and still hit living creatures
    assert.equal(living.health,90);assert.equal(corpse.health,0);assert.equal(g.projectiles.length,0);
  }
 });
-test('monster selection uses weights 10:10:5:1',()=>{
+test('monster selection uses zombie:archer:spider:enderman:Lucian weights 10:8:5:4:1',()=>{
  const g=game(),counts={};const original=context.Math.random;
- for(let n=0;n<26;n++){context.Math.random=()=> (n+.5)/26;const type=g.rollMonsterType();counts[type]=(counts[type]||0)+1;}
- context.Math.random=original;assert.deepEqual(counts,{zombie:10,savage_archer:10,spider:5,dark_lucian:1});
+ for(let n=0;n<28;n++){context.Math.random=()=> (n+.5)/28;const type=g.rollMonsterType();counts[type]=(counts[type]||0)+1;}
+ assert.deepEqual(counts,{zombie:10,savage_archer:8,spider:5,enderman:4,dark_lucian:1});
+ g.lucianSpawnNights=new Set([g.lucianNightKey()]);const capped={};
+ for(let n=0;n<27;n++){context.Math.random=()=> (n+.5)/27;const type=g.rollMonsterType();capped[type]=(capped[type]||0)+1;}
+ context.Math.random=original;assert.deepEqual(capped,{zombie:10,savage_archer:8,spider:5,enderman:4});
 });
 test('holy gun drops with five uses and fires toward the mouse with its own cooldown',()=>{
  const g=game();g.projectiles=[];g.pointerInside=true;
@@ -157,7 +160,7 @@ test('natural Lucian spawning is capped per night, including midnight and the fi
  assert.equal(g.spawnNaturalMonster('dark_lucian',5,0),null);assert.notEqual(g.rollMonsterType(),'dark_lucian');
  g.mobs=[];g.clock.day=2;g.clock.time=1*3600;
  assert.equal(g.spawnNaturalMonster('dark_lucian',5,0),null);
- g.clock.time=21*3600;assert.equal(g.rollMonsterType(),'dark_lucian');
+ g.clock.time=21*3600;context.Math.random=()=>27.5/28;assert.equal(g.rollMonsterType(),'dark_lucian');
  assert(g.spawnNaturalMonster('dark_lucian',5,0));assert.equal(g.spawnNaturalMonster('dark_lucian',6,0),null);
  context.Math.random=original;
 });
@@ -189,5 +192,24 @@ test('both holy gun owners trigger shooting sounds, with quieter distant shots a
  a.playHolyGunShot();a.ctx.currentTime=.01;a.playHolyGunShot();assert.equal(sounds,1);
  a.ctx.currentTime=.04;a.playHolyGunShot();assert.equal(sounds,2);
  a.ctx.currentTime=.1;a.muted=true;a.playHolyGunShot();assert.equal(sounds,2);
+});
+test('enderman blink sound plays a short sweep, respects mute and limits simultaneous voices',()=>{
+ const a=Object.create(W.AudioDirector.prototype);a.actionSounds={};a.ctx={currentTime:0};a.muted=false;
+ let noises=0,tones=0;a.noiseBurst=()=>{noises++;};a.actionTone=()=>{tones++;};
+ a.playEndermanBlink();assert.equal(noises,1);assert.equal(tones,2);
+ a.ctx.currentTime=.01;a.playEndermanBlink();assert.equal(noises,1);
+ a.ctx.currentTime=.1;a.playEndermanBlink();assert.equal(noises,2);assert.equal(tones,4);
+ a.muted=true;a.ctx.currentTime=.2;a.playEndermanBlink();assert.equal(noises,2);
+ assert.equal(a.actionSounds.endermanBlink,4);
+});
+test('portal creation and exchange sounds are distinct, respect mute and bound simultaneous voices',()=>{
+ for(const method of ['playPortalOpen','playPortalSwap']) {
+  const a=Object.create(W.AudioDirector.prototype);a.actionSounds={};a.ctx={currentTime:0};a.muted=false;
+  let noises=0,tones=0;a.noiseBurst=()=>{noises++;};a.actionTone=()=>{tones++;};
+  a[method]();assert.equal(noises,1);assert.equal(tones,2);
+  a.ctx.currentTime=.01;a[method]();assert.equal(noises,1);
+  a.ctx.currentTime=.1;a[method]();assert.equal(noises,2);
+  a.muted=true;a.ctx.currentTime=.2;a[method]();assert.equal(noises,2);
+ }
 });
 console.log(`${passed} progression and Lucian checks passed`);

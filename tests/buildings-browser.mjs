@@ -155,6 +155,29 @@ try {
   })()`);
   assert.equal(jointMining.remaining.includes("torch"),false);
   assert.ok(jointMining.drops.includes("torch")&&jointMining.drops.includes("wall"));
+  const treeDepth=await evaluate(`(()=>{
+    const g=wildsGame,r=g.renderer;g.paused=true;
+    const tree={type:'tree',tx:3,ty:3},wall={type:'wall',tx:3,ty:2};
+    const original=r.ctx,room=r.roomIndex,viewer=r.viewerRoom;r.roomIndex=null;r.viewerRoom=null;
+    function layer(draw){const canvas=document.createElement('canvas');canvas.width=480;canvas.height=300;r.ctx=canvas.getContext('2d');draw();return r.ctx.getImageData(0,0,480,300).data;}
+    let checked=0,maxError=0;
+    try{
+      const trees=layer(()=>r.drawFixedObject(tree,0,0,0)),walls=layer(()=>r.drawFixedObject(wall,0,0,0));
+      const combined=layer(()=>r.drawPlacedObjects([tree,wall],0,0,0));
+      for(let i=0;i<trees.length;i+=4){
+        if(trees[i+3]!==255||walls[i+3]!==255||trees[i+1]<=trees[i])continue;
+        checked++;for(let c=0;c<3;c++)maxError=Math.max(maxError,Math.abs(combined[i+c]-(trees[i+c]*.72+walls[i+c]*.28)));
+      }
+    }finally{r.ctx=original;r.roomIndex=room;r.viewerRoom=viewer;}
+    g.placedObjects.clear();g.placedObjectTiles.clear();g.invalidateRooms();g.mobs=[];g.drops=[];g.farm.clear();
+    g.player.x=10;g.player.y=30;g.player.cameraOffset=null;
+    g.world.terrainAt=()=>Wilds.TERRAIN.GRASS;g.world.featureAt=(x,y)=>x===3&&y===3?Wilds.FEATURE.TREE:Wilds.FEATURE.NONE;
+    const placed={...wall,itemId:'wall',tiles:[{tx:3,ty:2}]};placed.storageKey=Wilds.Buildings.key(placed);g.placedObjects.set(placed.storageKey,placed);g.placedObjectTiles.set('3,2',new Set([placed]));
+    r.render(g.player,0,{darkness:0,warm:0},[],null,[placed],[],[],g.getRoomIndex());
+    return {checked,maxError,natural:r.naturalFixtures.some(o=>o.type==='tree'&&o.tx===3&&o.ty===3),ghosts:r.occlusionGhostCount};
+  })()`);
+  assert(treeDepth.checked>0);assert(treeDepth.maxError<3,JSON.stringify(treeDepth));assert(treeDepth.natural);assert(treeDepth.ghosts>0);
+  await screenshot("browser-tree-depth-ghost");
   assert.deepEqual(errors, []);
   console.log("Browser checks passed: crafting, layered placement, door passage, opaque roof, connected roof transparency, occlusion pixels, hover preview, invalid preview, no runtime errors.");
 } finally { ws.close(); }

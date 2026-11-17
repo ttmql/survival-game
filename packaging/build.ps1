@@ -1,4 +1,4 @@
-param([string]$OutputDirectory = "")
+﻿param([string]$OutputDirectory = "")
 $ErrorActionPreference = 'Stop'
 $projectRoot = Split-Path -Parent $PSScriptRoot
 if (!$OutputDirectory) { $OutputDirectory = Join-Path $projectRoot 'dist' }
@@ -29,7 +29,7 @@ try {
 } finally { $stream.Dispose() }
 $framework = Join-Path $env:SystemRoot 'Microsoft.NET\Framework64\v4.0.30319'
 $compiler = Join-Path $framework 'csc.exe'
-$exe = Join-Path $OutputDirectory '荒野方界.exe'
-& $compiler /nologo /target:winexe /platform:anycpu /optimize+ "/out:$exe" "/resource:$archivePath,game.zip" /reference:System.Windows.Forms.dll "/reference:$(Join-Path $framework 'System.IO.Compression.dll')" (Join-Path $PSScriptRoot 'Launcher.cs')
+$exe = Join-Path $OutputDirectory '悠然求生.exe'
+& $compiler /nologo /codepage:65001 /target:winexe /platform:anycpu /optimize+ "/out:$exe" "/resource:$archivePath,game.zip" /reference:System.Windows.Forms.dll "/reference:$(Join-Path $framework 'System.IO.Compression.dll')" (Join-Path $PSScriptRoot 'Launcher.cs')
 if ($LASTEXITCODE -ne 0) { throw 'EXE 编译失败。' }
 Write-Output $exe

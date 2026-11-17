@@ -11,7 +11,7 @@
   const miningTool = (type) => WOODEN_FIXTURES.has(type) ? "axe" : "pickaxe";
   const height = (object) => ({ wall: WALL_HEIGHT, wood_door: WALL_HEIGHT,
     wood_fence: FENCE_HEIGHT, fence_gate: FENCE_HEIGHT, stele: 15,
-    respawn_stele: 7, furnace: 5, workbench: 0, storage_chest: 0, bed: 0 }[object.type] ?? 0);
+    respawn_stele: 7, furnace: 5, workbench: 0, storage_chest: 0, bed: 0, tree: 12 }[object.type] ?? 0);
   const PASSABLE = new Set(["torch", "wood_floor", "driftwood", "roof"]);
   const isBlocking = (object) => !PASSABLE.has(object.type);
   const isDoor = (object) => object.type === "wood_door" || object.type === "fence_gate";

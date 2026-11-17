@@ -5,7 +5,7 @@
   "description": "荒野方界：一个零依赖的程序化二维沙盒世界原型",
   "scripts": {
     "build:exe": "powershell -NoProfile -ExecutionPolicy Bypass -File packaging/build.ps1",
-    "test": "node tests/world.test.mjs && node tests/player.test.mjs && node tests/time.test.mjs && node tests/inventory.test.mjs && node tests/creatures.test.mjs && node tests/buildings.test.mjs && node tests/rooms-death.test.mjs && node tests/water.test.mjs && node tests/debug.test.mjs && node tests/gift.test.mjs && node tests/farming.test.mjs && node tests/interaction.test.mjs && node tests/progression.test.mjs",
+    "test": "node tests/world.test.mjs && node tests/player.test.mjs && node tests/time.test.mjs && node tests/inventory.test.mjs && node tests/creatures.test.mjs && node tests/buildings.test.mjs && node tests/rooms-death.test.mjs && node tests/water.test.mjs && node tests/debug.test.mjs && node tests/gift.test.mjs && node tests/farming.test.mjs && node tests/interaction.test.mjs && node tests/progression.test.mjs && node tests/portal.test.mjs && node tests/performance.test.mjs && node tests/modes.test.mjs",
     "test:browser": "powershell -ExecutionPolicy Bypass -File tests/run-browser-test.ps1"
   }
 }

@@ -77,7 +77,12 @@
               <span class="minimap-hint">M 大地图</span>
             </div>
             <canvas id="minimap" width="132" height="88" aria-label="记录附近地形与复活点方向的小地图"></canvas>
+            <span id="creativeFlightHint" class="creative-flight-hint" hidden>按 F 快速疾行</span>
           </aside>
+          <div class="session-controls">
+            <button id="switchGameMode" class="exit-button" type="button" hidden>切换模拟生存</button>
+            <button id="exitGame" class="exit-button" type="button">退出游戏</button>
+          </div>
 
           <section class="vitals-panel" id="vitalsPanel" aria-label="角色状态">
             <div class="vitals-head">
@@ -178,6 +183,11 @@
                 <button class="exit-button" id="closeBackpack" type="button">退出</button>
               </div>
               <div class="backpack-grid" id="backpackGrid"></div>
+              <div id="creativeCatalogue" hidden>
+                <div id="creativeCategories" class="creative-categories" role="group" aria-label="全部物品分类"></div>
+                <p class="creative-selection-hint" id="creativeSelectionHint">选择物品，再点击下方装备栏放入。</p>
+                <div id="creativeItemGrid" class="creative-item-grid"></div>
+              </div>
             </section>
           </div>
 
@@ -206,9 +216,11 @@
                 </div>
                 <button class="panel-close" id="closeStorage" type="button" aria-label="关闭储物箱">退出</button>
               </div>
-              <p class="storage-hint">点击箱子物品取回背包，点击背包物品放入箱子。</p>
+              <p class="storage-hint">点击箱子物品取回，点击装备栏或背包物品放入箱子。</p>
               <div class="storage-grid" id="chestGrid" role="group" aria-label="储物箱格子"></div>
-              <h3 class="storage-subtitle">背包</h3>
+              <h3 class="storage-subtitle">装备栏</h3>
+              <div class="storage-grid" id="chestEquipmentGrid" role="group" aria-label="装备栏格子"></div>
+              <h3 class="storage-subtitle survival-backpack">背包</h3>
               <div class="storage-grid" id="chestBackpackGrid" role="group" aria-label="背包格子"></div>
             </section>
           </div>
@@ -227,7 +239,7 @@
               <p class="storage-hint">点击装备栏或背包里的小煤块添加燃料；再点击一个炼材，消耗 1 个小煤块进行熔炼。</p>
               <p class="furnace-section-title">装备栏</p>
               <div class="storage-grid" id="furnaceEquipmentGrid" role="group" aria-label="熔炼炉装备栏格子"></div>
-              <p class="furnace-section-title">背包</p>
+              <p class="furnace-section-title survival-backpack">背包</p>
               <div class="storage-grid" id="furnaceBackpackGrid" role="group" aria-label="熔炼炉背包格子"></div>
               <p class="furnace-feedback" id="furnaceFeedback"></p>
             </section>
@@ -399,13 +411,24 @@
           <span><i class="map-key map-key-respawn"></i>复活点</span>
           <span id="mapRespawnCoords">复活点：—</span>
           <span id="mapExploredCount">已探索 0 格</span>
-          <span class="map-drag-hint">按住拖动地图</span>
+          <span class="map-drag-hint" id="mapActionHint">按住拖动地图</span>
         </div>
       </section>
     </div>
 
+    <div id="exitConfirmOverlay" class="exit-confirm-overlay" hidden>
+      <section class="exit-confirm-panel" role="dialog" aria-modal="true" aria-labelledby="exitConfirmTitle">
+        <h2 id="exitConfirmTitle">退出游戏？</h2>
+        <p>退出游戏会导致当前存档丢失，是否退出？</p>
+        <div class="exit-confirm-actions">
+          <button id="cancelExitGame" class="exit-button" type="button">继续游戏</button>
+          <button id="confirmExitGame" class="exit-button" type="button">确认退出</button>
+        </div>
+      </section>
+    </div>
     <div id="pauseOverlay" hidden style="position:fixed;inset:0;z-index:1000;background:#08110dcc;backdrop-filter:blur(4px);color:#eee5cf;text-align:center;padding-top:30vh">
       <h2 style="font-size:32px">游戏已暂停</h2><p>按空格继续游戏</p><button id="resumeGame" class="exit-button" type="button">继续游戏</button>
+      <button id="exitGameFromPause" class="exit-button" type="button">退出游戏</button>
     </div>
     <!-- 死亡弹窗（有复活点可复活，无则重开） -->
     <div class="death-overlay" id="deathOverlay" hidden>
@@ -417,6 +440,8 @@
         <p class="death-hint death-no-respawn" id="deathNoRespawn" hidden>没有复活点 · 游戏结束</p>
         <button class="death-button" id="respawnButton" type="button">复活</button>
         <button class="death-button death-restart" id="deathNewGameBtn" type="button" hidden>重新开始</button>
+        <button class="death-button" id="returnCreativeAfterDeath" type="button" hidden>切换创造模式</button>
+        <button class="death-button" id="exitGameFromDeath" type="button">退出游戏</button>
       </section>
     </div>
 
@@ -437,6 +462,11 @@
     </div>
 
     <div class="start-screen-controls">
+      <fieldset class="start-mode-options">
+        <legend>游戏模式</legend>
+        <label><input type="radio" name="gameMode" value="survival" checked> 生存模式</label>
+        <label><input type="radio" name="gameMode" value="creative"> 创造模式</label>
+      </fieldset>
       <label class="start-seed-label" for="seedInput">
         世界种子
         <span>可选 · 留空随机生成</span>

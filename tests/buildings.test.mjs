@@ -212,6 +212,17 @@ test("creature occlusion only uses tall blocking models below the creature", () 
   assert.equal(r.mobOccluders(mob,[{...wall,ty:-1}]).length,0);
   assert.equal(r.mobOccluders(mob,[{...wall,type:"torch"}]).length,0);
 });
+
+test("natural trees share foreground depth, fixture ghosts and creature occlusion",()=>{
+  const r=Object.create(W.Renderer.prototype);r.buildingTiles=new Map();
+  const tree={type:"tree",tx:1,ty:1},back={type:"workbench",tx:1,ty:0},wall={type:"wall",tx:1,ty:0};
+  assert.equal(r.occludingFixtures(back,[tree]).length,1);
+  assert.equal(r.occludingFixtures(tree,[wall]).length,0);
+  assert.equal(r.mobOccluders({x:30,y:10},[tree]).length,1);
+  const order=[];r.ctx={beginPath(){},ellipse(){},fill(){}};
+  r.drawFixedObject=o=>order.push(o.type);r.drawOccludedFixtures=()=>{};
+  r.drawPlacedObjects([tree,wall],0,0,0);assert.equal(order.join(','),'wall,tree');
+});
 test("backpack sorting merges to 64 and preserves independent tool durability",()=>{
  const g=game(),inv=g.inventory;
  inv.setSlot("backpack",3,{itemId:"wood",count:40});inv.setSlot("backpack",8,{itemId:"wood",count:35});
@@ -227,5 +238,16 @@ test("hotbar clicks switch held slots while backpack interactions still swap",()
  g.handleSlotClick("equipment",1);assert.equal(g.selectedSlot.index,1);
  g.handleSlotClick("backpack",0);g.handleSlotClick("equipment",0);assert.equal(g.inventory.equipment[0].itemId,"coal");assert.equal(g.inventory.backpack[0].itemId,"wood");assert.equal(g.selectedSlot.index,0);
  g.handleSlotClick("equipment",7);assert.equal(g.selectedSlot.index,7);assert.equal(g.getSelectedStack(),null);
+});
+test("equipment and backpack slots store transactionally, keeping durability and cooldown",()=>{
+ const g=game();g.storageOpen=true;g.storageObject={storage:new Array(32).fill(null)};g.renderStorage=()=>{};
+ g.inventory.equipment[0]={itemId:"wood",count:10};g.storageObject.storage[0]={itemId:"wood",count:60};
+ g.selectedSlot={area:"equipment",index:0};g.syncHeldStats=()=>{g.synced=true;};
+ assert(g.storeInventorySlot("equipment",0));assert.equal(g.inventory.equipment[0],null);assert.equal(g.selectedSlot.index,0);assert(g.synced);
+ assert.equal(g.storageObject.storage[0].count,64);assert.equal(g.storageObject.storage[1].count,6);
+ g.inventory.equipment[1]={itemId:"lucian_holy_gun",count:1,durability:3,skillReadyAt:20};
+ assert(g.storeInventorySlot("equipment",1));assert.equal(g.storageObject.storage[2].durability,3);assert.equal(g.storageObject.storage[2].skillReadyAt,20);
+ g.storageObject.storage.fill({itemId:"rock",count:64});g.inventory.backpack[0]={itemId:"wood",count:2};
+ assert.equal(g.storeInventorySlot("backpack",0),false);assert.equal(g.inventory.backpack[0].count,2);
 });
 console.log(`\n${passed} building integration checks passed`);

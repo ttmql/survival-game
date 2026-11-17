@@ -31,16 +31,15 @@ try {
  await send("Page.enable");await send("Runtime.enable");await send("Page.navigate",{url:target.href});
  for(let i=0;i<100;i++){if(await evaluate("!!globalThis.wildsGame"))break;await delay(100);}
  const info=await evaluate(`(()=>{const g=wildsGame;g.beginGameFromStart();return{debug:g.world.isDebugMap,seed:g.seedText,chests:[...g.placedObjects.values()].filter(o=>o.storage).length};})()`);
- assert.equal(info.debug,true);assert.equal(info.seed,"123456");assert.ok(info.chests>=24);await delay(700);await screenshot("debug-map-spawn");
+ assert.equal(info.debug,undefined);assert.equal(info.seed,"123456");assert.equal(info.chests,0);await delay(700);await screenshot("debug-map-spawn");
  async function space(){await send("Input.dispatchKeyEvent",{type:"keyDown",code:"Space",key:" ",windowsVirtualKeyCode:32});await send("Input.dispatchKeyEvent",{type:"keyUp",code:"Space",key:" ",windowsVirtualKeyCode:32});}
  await space();const frozen=await evaluate("({paused:wildsGame.paused,time:wildsGame.clock.time,elapsed:wildsGame.elapsed})");assert.equal(frozen.paused,true);
  await delay(350);assert.equal(await evaluate("wildsGame.clock.time"),frozen.time);assert.equal(await evaluate("wildsGame.elapsed"),frozen.elapsed);assert.equal(await evaluate("document.getElementById('pauseOverlay').hidden"),false);
  await screenshot("game-space-pause");await space();await delay(150);assert.equal(await evaluate("wildsGame.paused"),false);assert.ok(await evaluate("wildsGame.clock.time")>frozen.time);
- await evaluate("wildsGame.clock.setTimeOfDay(22);wildsGame.trySleep();true");await delay(100);await space();await delay(350);
+ await evaluate("wildsGame.firstNightLucianSpawned=true;wildsGame.clock.setTimeOfDay(22);wildsGame.trySleep();true");await delay(100);await space();await delay(350);
  assert.equal(await evaluate("wildsGame.sleeping && wildsGame.paused"),true);
  await space();await delay(100);assert.equal(await evaluate("wildsGame.sleeping && !wildsGame.paused"),true);
  await evaluate("wildsGame.closeSleep();true");
- const supplies=await evaluate(`(()=>{const g=wildsGame;const chests=[...g.placedObjects.values()].filter(o=>o.storage);return Object.values(Wilds.ITEMS).every(item=>{const stacks=chests.flatMap(c=>c.storage).filter(s=>s?.itemId===item.id);return g.inventory.maxStackFor(item.id)===1?stacks.length===3&&stacks.every(s=>s.count===1):stacks.reduce((n,s)=>n+s.count,0)===64;});})()`);
- assert.equal(supplies,true);await evaluate("wildsGame.openMap();true");await screenshot("debug-map-layout");assert.deepEqual(errors,[]);
- console.log("Debug browser checks passed: seed, catalogue supplies, space pause, frozen simulation and resume.");
+ await evaluate("wildsGame.openMap();true");await screenshot("debug-map-layout");assert.deepEqual(errors,[]);
+ console.log("Ordinary-seed browser checks passed: removed test map, space pause, frozen simulation and resume.");
 }finally{ws.close();}

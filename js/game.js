@@ -31,6 +31,7 @@
     pig: Object.freeze({ name: "猪", maxHealth: 100, speed: 22, monster: false, drops: [["raw_pork", 1]] }),
     spider: Object.freeze({ name: "蜘蛛", maxHealth: 100, speed: 28, monster: true, attack: "melee", damage: 15, drops: [["spider_leg", 1]] }),
     dark_lucian: Object.freeze({name:"黑化卢锡安",maxHealth:100,speed:26,monster:true,attack:"culling",damage:10,drops:[["lucian_holy_gun",1]]}),
+    enderman: Object.freeze({ name: "末影人", maxHealth: 90, speed: 30, monster: true, attack: "melee", damage: 30, drops: [["enderman_portal_fragment", 1]] }),
     zombie: Object.freeze({ name: "僵尸", maxHealth: 70, speed: 28, monster: true, attack: "melee", damage: 15, drops: [["zombie_elbow", 1]] }),
     savage_archer: Object.freeze({ name: "野人射手", maxHealth: 55, speed: 22, monster: true, attack: "ranged", damage: 25, drops: [["silk", 1]] }),
   });
@@ -137,6 +138,11 @@
       this.worldMapCtx.imageSmoothingEnabled = false;
       this.mapRespawnCoords = document.getElementById("mapRespawnCoords");
       this.mapExploredCount = document.getElementById("mapExploredCount");
+      this.creativeFlightHint = document.getElementById("creativeFlightHint");
+      this.switchGameModeButton = document.getElementById("switchGameMode");
+      this.exitConfirmOverlay = document.getElementById("exitConfirmOverlay");
+      this.returnCreativeAfterDeathButton = document.getElementById("returnCreativeAfterDeath");
+      this.mapActionHint = document.getElementById("mapActionHint");
       this.deathOverlay = document.getElementById("deathOverlay");
       this.respawnButton = document.getElementById("respawnButton");
       this.deathNewGameBtn = document.getElementById("deathNewGameBtn");
@@ -169,6 +175,9 @@
       this.bagButton = document.getElementById("bagButton");
       this.backpackOverlay = document.getElementById("backpackOverlay");
       this.backpackGrid = document.getElementById("backpackGrid");
+      this.creativeCatalogue = document.getElementById("creativeCatalogue");
+      this.creativeItemGrid = document.getElementById("creativeItemGrid");
+      this.creativeCategories = document.getElementById("creativeCategories");
       this.closeBackpackButton = document.getElementById("closeBackpack");
       this.sortBackpackButton = document.getElementById("sortBackpack");
       this.workbenchOverlay = document.getElementById("workbenchOverlay");
@@ -178,6 +187,7 @@
       this.steleOverlay = document.getElementById("steleOverlay");
       this.storageOverlay = document.getElementById("storageOverlay");
       this.chestGrid = document.getElementById("chestGrid");
+      this.chestEquipmentGrid = document.getElementById("chestEquipmentGrid");
       this.chestBackpackGrid = document.getElementById("chestBackpackGrid");
       this.closeStorageButton = document.getElementById("closeStorage");
       this.furnaceOverlay = document.getElementById("furnaceOverlay");
@@ -221,12 +231,17 @@
       document.getElementById("resumeGame").addEventListener("click",()=>this.togglePause());
 
       this.inventory = new Wilds.Inventory();
+      this.sessionMode = "survival";
+      this.gameMode = "survival";
+      this.creativeCategory = "tools";
+      this.creativePick = null;
       // Keep the first held slot empty; the starting scroll belongs in slot two.
       this.inventory.addEquipment("creation_scroll");
       this.inventory.swap({ area: "equipment", index: 0 }, { area: "equipment", index: 1 });
       this.inventoryButtons = { equipment: [], backpack: [] };
       this.heldSlotIndex = 0;
       this.swapSelection = null;
+      this.panelSelection = null;
       Object.defineProperty(this,"selectedSlot",{
         get:()=>({area:"equipment",index:this.heldSlotIndex}),
         set:value=>{if(value?.area==="equipment" && Number.isInteger(value.index) && value.index>=0 && value.index<8)this.heldSlotIndex=value.index;},
@@ -271,6 +286,7 @@
       this.respawn = null;
       this.lastDeath = null;
       this.mapOpen = false;
+      this.mapPortalTarget = null;
       this.isDead = false;
       this.mapCamX = 0;
       this.mapCamY = 0;
@@ -324,6 +340,7 @@
     }
 
     die() {
+      if (this.isCreative()) return;
       if (this.isDead || !this.player) return;
 
       this.isDead = true;
@@ -333,6 +350,7 @@
       this.combatMusicUntil = 0;
       this.closeSleep();
       this.holyGunCasts=[];
+      this.clearPortalEffects();
       this.clearFoodPress();
       this.closeMap();
       this.closeWorkbench();
@@ -476,54 +494,22 @@
       if(this.pauseOverlay)this.pauseOverlay.hidden=!this.paused;
     }
 
-    buildDebugMap() {
-      const place=(type,tx,ty)=>{
-        const item=Object.values(Wilds.ITEMS).find(item=>item.placeType===type);
-        if(!item)return null;
-        const object={id:++this.placedObjectSequence,type,itemId:item.id,tx,ty,tiles:[{tx,ty}],open:false,
-          storage:type==="storage_chest"?new Array(32).fill(null):null,fuel:type==="furnace"?0:null};
-        object.storageKey=Wilds.Buildings.key(object);this.placedObjects.set(object.storageKey,object);
-        const key=tx+","+ty,occupants=this.placedObjectTiles.get(key)||new Set();occupants.add(object);this.placedObjectTiles.set(key,occupants);
-        return object;
-      };
-      for(let y=-6;y<=0;y++)for(let x=-8;x<=-2;x++) {
-        place("wood_floor",x,y);
-        if(y===-6 || y===0 || x===-8 || x===-2)place(x===-5&&y===0?"wood_door":"wall",x,y);
-        place("roof",x,y);
-      }
-      place("torch",-8,-3);place("torch",-2,-3);
-      for(let x=5;x<=12;x++)place("driftwood",x,2);
-      const existing=new Set([...this.placedObjects.values()].map(o=>o.type));
-      let showcase=0;
-      for(const item of Object.values(Wilds.ITEMS))if(item.placeType&&!existing.has(item.placeType)) {
-        const tx=-11+(showcase%7)*2,ty=4+Math.floor(showcase/7)*2;
-        place(item.placeType,tx,ty);existing.add(item.placeType);showcase++;
-      }
-      // Lots of accessible supply chests. Populate from the catalogue so future
-      // items are included automatically, without maintaining a second list.
-      const chests=[];
-      for(let row=0;row<3;row++)for(let col=0;col<8;col++)chests.push(place("storage_chest",-12+col*2,8+row*2));
-      const supplies=[];
-      for(const item of Object.values(Wilds.ITEMS)) {
-        if(this.inventory.maxStackFor(item.id)===1)for(let n=0;n<3;n++)supplies.push({itemId:item.id,count:1,durability:item.maxDurability});
-        else supplies.push({itemId:item.id,count:64});
-      }
-      while(chests.length*32<supplies.length)chests.push(place("storage_chest",-12+chests.length*2,20));
-      supplies.forEach((stack,i)=>chests[Math.floor(i/32)].storage[i%32]=stack);
-      const stele=[...this.placedObjects.values()].find(o=>o.type==="respawn_stele");
-      if(stele){stele.active=true;this.respawn={tx:stele.tx,ty:stele.ty};}
-      this.invalidateRooms();
-    }
-
     bindEvents() {
       document.addEventListener("keydown", (event) => {
         if (!this.started) return;
+        if (this.exitConfirmationOpen) { if (event.code === "Escape") this.cancelExitGame(); return; }
         if (event.ctrlKey || event.metaKey || event.altKey) return;
         if(event.target?.matches?.("input,textarea,[contenteditable=true]"))return;
         if(event.code === "Space") {event.preventDefault();if(!event.repeat)this.togglePause();return;}
         if(this.paused)return;
+        if(event.code === "KeyF" && !event.repeat && this.isCreative() && this.canSwitchHeldSlot()) {
+          event.preventDefault(); this.player.fastTravel = !this.player.fastTravel; this.updateModeUI(); return;
+        }
         if(event.code==="KeyR" && !event.repeat) {
-          if(this.canSwitchHeldSlot()){event.preventDefault();this.startHolyGun();}
+          if (this.mapOpen && this.getHeldEquipment()?.item.skill === "portal") {
+            event.preventDefault(); this.startPortal(true); return;
+          }
+          if(this.canSwitchHeldSlot()){event.preventDefault();this.getHeldEquipment()?.item.skill === "portal" ? this.startPortal() : this.startHolyGun();}
           return;
         }
 
@@ -600,6 +586,12 @@
     }
 
     bindStartScreen() {
+      for (const id of ["exitGame","exitGameFromPause","exitGameFromDeath"])
+        document.getElementById(id).addEventListener("click", () => this.requestExitGame());
+      document.getElementById("cancelExitGame").addEventListener("click", () => this.cancelExitGame());
+      document.getElementById("confirmExitGame").addEventListener("click", () => this.returnToStart());
+      this.switchGameModeButton.addEventListener("click", () => this.toggleSimulationMode());
+      this.returnCreativeAfterDeathButton.addEventListener("click", () => this.toggleSimulationMode());
       this.startGameButton.addEventListener("click", () => {
         this.beginGameFromStart();
       });
@@ -615,6 +607,14 @@
       if (this.started) return;
 
       const rawSeed = this.seedInput.value;
+      this.sessionMode = document.querySelector('input[name="gameMode"]:checked')?.value === "creative" ? "creative" : "survival";
+      this.gameMode = this.sessionMode;
+      this.inventory = new Wilds.Inventory();
+      this.inventory.creative = this.isCreative();
+      if (!this.isCreative()) {
+        this.inventory.addEquipment("creation_scroll");
+        this.inventory.swap({ area: "equipment", index: 0 }, { area: "equipment", index: 1 });
+      }
       this.started = true;
       this.startScreen.hidden = true;
       document.body.classList.remove("start-mode");
@@ -627,6 +627,117 @@
       this.regenerate(false, this.requestedSeed);
       this.audio.start();
       this.updateAudio(performance.now());
+    }
+
+    isCreative() { return this.gameMode === "creative"; }
+
+    toggleSimulationMode() {
+      if (this.sessionMode !== "creative" || this.paused || this.sleeping) return;
+      if (this.isDead) { this.closeDeath(); this.isDead = false; this.player.health = this.player.maxHealth; this.bagButton.disabled = false; }
+      this.setGameMode(this.isCreative() ? "survival" : "creative");
+    }
+
+    setGameMode(mode) {
+      const creative = mode === "creative";
+      this.gameMode = creative ? "creative" : "survival";
+      this.inventory.creative = creative;
+      this.player.creative = creative; this.player.fastTravel = false;
+      if (creative) {
+        this.player.health = this.player.maxHealth; this.player.satiety = this.player.maxSatiety; this.player.oxygen = this.player.maxOxygen;
+        this.player.deathCause = null; this.player.poisonRemainingHours = 0; this.player.poisonDamageRemaining = 0;
+        this.player.poisonSources = []; this.player.slowRemainingHours = 0; this.player.speedFactor = 1; this.player.manureDietHours = 0;
+        for (const mob of this.mobs) { mob.aggro = false; mob.provoked = false; mob.fleeUntil = 0; }
+        this.combatMusicUntil = 0;
+      }
+      this.creativePick = null; this.swapSelection = null;
+      this.cancelMining(); this.hideItemDetails(); this.updateModeUI(); this.renderInventory(); this.syncHeldStats(); this.syncHud(true);
+    }
+
+    updateModeUI() {
+      const creative = this.isCreative();
+      document.body.classList.toggle("creative-mode", creative);
+      if (this.vitalsPanel) this.vitalsPanel.hidden = creative;
+      if (this.creativeCatalogue) this.creativeCatalogue.hidden = !creative;
+      if (this.backpackGrid) this.backpackGrid.hidden = creative;
+      if (this.sortBackpackButton) this.sortBackpackButton.hidden = creative;
+      const title = document.getElementById("backpackTitle"); if (title) title.textContent = creative ? "全部物品" : "背包";
+      const label = this.bagButton?.querySelector("span"); if (label) label.textContent = creative ? "全部物品" : "背包";
+      this.bagButton?.setAttribute("aria-label", creative ? "打开全部物品" : "打开背包");
+      if (this.switchGameModeButton) {
+        this.switchGameModeButton.hidden = this.sessionMode !== "creative";
+        this.switchGameModeButton.textContent = creative ? "切换模拟生存" : "切换创造模式";
+      }
+      if (this.returnCreativeAfterDeathButton) this.returnCreativeAfterDeathButton.hidden = this.sessionMode !== "creative";
+      if (this.creativeFlightHint) {
+        this.creativeFlightHint.hidden = !creative;
+        this.creativeFlightHint.textContent = this.player?.fastTravel ? "疾行 ×5 · 按 F 恢复" : "按 F 快速疾行";
+      }
+      if (creative) this.renderCreativeCatalogue();
+    }
+
+    creativeItemCategory(item) {
+      if (item.placeType) return "fixtures";
+      if (item.maxDurability > 0 && !item.unbreakable)
+        return ["axe", "pickaxe", "shovel", "hoe"].includes(item.toolType) ? "tools" : "equipment";
+      return "materials";
+    }
+
+    renderCreativeCatalogue() {
+      if (!this.creativeItemGrid || !this.creativeCategories) return;
+      const picked = this.inventory.itemDefinition(this.creativePick);
+      document.getElementById("creativeSelectionHint").textContent = picked
+        ? "已选择「" + picked.name + "」，点击装备栏放入。" : "选择物品，再点击下方装备栏放入。";
+      this.creativeCategories.replaceChildren();
+      for (const [id, name] of [["tools","工具"],["equipment","装备"],["materials","耗材"],["fixtures","杂物"]]) {
+        const button = document.createElement("button"); button.type = "button"; button.className = "exit-button";
+        button.textContent = name; button.dataset.category = id; button.setAttribute("aria-pressed", String(this.creativeCategory === id));
+        button.addEventListener("click", () => {this.creativeCategory = id; this.renderCreativeCatalogue();});
+        this.creativeCategories.appendChild(button);
+      }
+      this.creativeItemGrid.replaceChildren();
+      for (const item of Object.values(Wilds.ITEMS).filter(item => this.creativeItemCategory(item) === this.creativeCategory)) {
+        const button = document.createElement("button"); button.type = "button"; button.className = "inv-slot creative-item";
+        button.classList.toggle("is-selected", this.creativePick === item.id); button.dataset.item = item.id; button.setAttribute("aria-label", item.name);
+        button.setAttribute("aria-pressed", String(this.creativePick === item.id));
+        button.innerHTML = Wilds.itemIcon(item); const name = document.createElement("span"); name.className = "creative-item-name"; name.textContent = item.name; button.appendChild(name);
+        const stack = {itemId:item.id,count:this.inventory.maxStackFor(item.id),durability:item.maxDurability};
+        button.addEventListener("pointerenter", () => this.showItemDetails(stack, true));
+        button.addEventListener("pointerleave", () => this.hideItemDetails());
+        button.addEventListener("click", () => {
+          this.creativePick = item.id;
+          this.renderCreativeCatalogue();
+        });
+        this.creativeItemGrid.appendChild(button);
+      }
+    }
+
+    requestExitGame() {
+      if (!this.started || this.exitConfirmationOpen) return;
+      this.exitWasPaused = this.paused;
+      if (!this.paused && !this.isDead) this.togglePause();
+      this.exitConfirmationOpen = true; this.exitConfirmOverlay.hidden = false;
+    }
+
+    cancelExitGame() {
+      this.exitConfirmationOpen = false; this.exitConfirmOverlay.hidden = true;
+      if (!this.exitWasPaused && this.paused && !this.isDead) this.togglePause();
+    }
+
+    returnToStart() {
+      this.closeSleep(); this.clearPortalEffects(); this.clearFoodPress(); this.releaseMiningPointer(); this.cancelMining();
+      for (const close of ["closeBackpack","closeWorkbench","closeStele","closeStorage","closeFurnace","closeMap","closeDeath"]) this[close]();
+      this.exitConfirmationOpen = false; this.exitConfirmOverlay.hidden = true;
+      this.started = false; this.paused = false; this.pauseOverlay.hidden = true; this.isDead = false;
+      this.keys.clear(); this.mobs = []; this.projectiles = []; this.drops = []; this.giftEffects = []; this.waterEffects = [];
+      this.placedObjects.clear(); this.placedObjectTiles.clear(); this.explored.clear(); this.farm?.clear(); this.farmVisited?.clear(); this.farmTrees?.clear();
+      this.roomIndex = null; this.world = null; this.player = null; this.renderer.setWorld(null);
+      this.inventory = new Wilds.Inventory(); this.holyGunCasts = []; this.lucianSpawnNights = new Set();
+      this.selectedSlot = {area:"equipment",index:0}; this.swapSelection = null; this.creativePick = null; this.gameMode = "survival";
+      this.lastFrameTime = 0; this.elapsed = 0; this.seed = null; this.seedText = "";
+      if (this.audio?.timer) window.clearInterval(this.audio.timer);
+      this.audio?.animalSound?.pause(); this.audio?.ctx?.close()?.catch?.(() => {}); this.audio = new Wilds.AudioDirector();
+      document.body.classList.remove("game-mode", "creative-mode"); document.body.classList.add("start-mode");
+      this.startScreen.hidden = false; this.hintHidden = false; this.startHint.classList.remove("is-hidden"); this.hideItemDetails(); this.renderInventory();
     }
 
     updateAudio(now) {
@@ -686,7 +797,9 @@
       this.nextFirstNightLucianAttempt=0;
       this.lucianSpawnNights=new Set();
       this.holyGunTime=0;this.holyGunCasts=[];
+      this.portalEffects = []; this.portalSequence = 0;
       this.player = new Wilds.Player(this.world);
+      this.player.creative = this.isCreative();
       this.player.isBlockedTile = (tx, ty) => this.isGroundBlockedForCreature(tx, ty);
       this.player.isSupportedTile = (tx, ty) => this.hasWaterSupport(tx, ty);
       this.player.isBlockedArea = (l, t, r, b) => this.groundAreaBlocked(l, t, r, b);
@@ -717,7 +830,6 @@
       this.mobs = [];
       this.projectiles = [];
       this.giftEffects = [];
-      if(this.world.isDebugMap)this.buildDebugMap();
       this.releaseMiningPointer();
       this.cancelMining();
       this.pointerInside = false;
@@ -743,6 +855,7 @@
       this.seedCode.textContent = this.seedText;
       storeSeedInLocation(this.seedText);
 
+      this.updateModeUI();
       this.syncHud(true);
       this.drawMinimap();
 
@@ -1002,6 +1115,7 @@
       if (this.backpackOpen) this.closeBackpack();
 
       this.mapOpen = true;
+      this.mapPortalTarget = null;
       this.mapOverlay.hidden = false;
       this.bagButton.disabled = true;
       this.keys.clear();
@@ -1018,6 +1132,7 @@
 
     closeMap() {
       this.mapOpen = false;
+      this.mapPortalTarget = null;
       this.mapDragging = false;
       this.mapOverlay.hidden = true;
       this.worldMapCanvas.classList.remove("is-dragging");
@@ -1063,6 +1178,7 @@
         }
       }
 
+      this.drawMapPortalPreview();
       const playerX = (this.player.x / CONFIG.TILE_SIZE - this.mapCamX) * scale;
       const playerY = (this.player.y / CONFIG.TILE_SIZE - this.mapCamY) * scale;
       if (playerX >= -10 && playerX <= width + 10 && playerY >= -10 && playerY <= height + 10) {
@@ -1142,6 +1258,40 @@
         "已探索 " + this.explored.size + " 格";
     }
 
+    updateMapPortalTarget(clientX, clientY) {
+      if (!this.mapOpen || this.getHeldEquipment()?.item.skill !== "portal") return;
+      const rect = this.worldMapCanvas.getBoundingClientRect();
+      const x = (clientX - rect.left) * this.worldMapCanvas.width / Math.max(1, rect.width);
+      const y = (clientY - rect.top) * this.worldMapCanvas.height / Math.max(1, rect.height);
+      if (x < 0 || y < 0 || x >= this.worldMapCanvas.width || y >= this.worldMapCanvas.height) return;
+      this.mapPortalTarget = { x: (this.mapCamX + x / MAP_SCALE) * CONFIG.TILE_SIZE,
+        y: (this.mapCamY + y / MAP_SCALE) * CONFIG.TILE_SIZE };
+    }
+
+    drawMapPortalPreview() {
+      const held = this.getHeldEquipment();
+      if (this.mapActionHint) this.mapActionHint.textContent = held?.item.skill === "portal"
+        ? `拖动查看 · 鼠标选点，按R传送 · ${CONFIG.MAP_PORTAL_RANGE}格内已探索区域` : "按住拖动地图";
+      if (held?.item.skill !== "portal" || !this.mapPortalTarget) return;
+      const target = this.portalPlan(this.mapPortalTarget.x, this.mapPortalTarget.y, true);
+      const ctx = this.worldMapCtx, previous = this.renderer.ctx;
+      const valid = target.valid && this.holyGunRemaining(held.stack) <= 0;
+      ctx.save();
+      try {
+        this.renderer.ctx = ctx;
+        for (const end of [target.origin, target]) {
+          const x = (end.x / CONFIG.TILE_SIZE - this.mapCamX) * MAP_SCALE;
+          const y = (end.y / CONFIG.TILE_SIZE - this.mapCamY) * MAP_SCALE;
+          const radius = target.radius / CONFIG.TILE_SIZE * MAP_SCALE;
+          ctx.globalAlpha = 0.4;
+          this.renderer.drawPortalDisc(x, y, radius, this.elapsed, false);
+          ctx.globalAlpha = 1; ctx.lineWidth = 2; ctx.setLineDash([4, 3]);
+          ctx.strokeStyle = valid ? "#7df7a1" : "#ff646f";
+          ctx.beginPath(); ctx.arc(x, y, radius, 0, Math.PI * 2); ctx.stroke();
+        }
+      } finally { this.renderer.ctx = previous; ctx.restore(); }
+    }
+
     bindMapEvents() {
       this.closeMapButton.addEventListener("click", () => {
         this.closeMap();
@@ -1150,6 +1300,8 @@
       this.worldMapCanvas.addEventListener("pointerdown", (event) => {
         if (!this.mapOpen || event.button !== 0) return;
         event.preventDefault();
+        this.updateMapPortalTarget(event.clientX, event.clientY);
+        this.drawBigMap();
         this.mapDragging = true;
         this.mapDragLastX = event.clientX;
         this.mapDragLastY = event.clientY;
@@ -1162,7 +1314,12 @@
       });
 
       this.worldMapCanvas.addEventListener("pointermove", (event) => {
-        if (!this.mapOpen || !this.mapDragging) return;
+        if (!this.mapOpen) return;
+        if (!this.mapDragging) {
+          this.updateMapPortalTarget(event.clientX, event.clientY);
+          if (this.getHeldEquipment()?.item.skill === "portal") this.drawBigMap();
+          return;
+        }
         event.preventDefault();
         const rect = this.worldMapCanvas.getBoundingClientRect();
         const dx = (event.clientX - this.mapDragLastX) * (this.worldMapCanvas.width / Math.max(1, rect.width));
@@ -1171,6 +1328,7 @@
         this.mapDragLastY = event.clientY;
         this.mapCamX -= dx / MAP_SCALE;
         this.mapCamY -= dy / MAP_SCALE;
+        this.updateMapPortalTarget(event.clientX, event.clientY);
         this.drawBigMap();
       });
 
@@ -1207,6 +1365,7 @@
         this.clock.update(delta);
         this.updateFarming(delta);
         this.updateHolyGun(delta);
+        this.updatePortalEffects(delta);
         this.spawnFirstNightLucian();
         const gameHoursDelta = (delta * Wilds.TIME_SCALE) / 3600;
         this.updateSurvival(gameHoursDelta);
@@ -1216,6 +1375,7 @@
           this.lastPlayerSafe = { x: this.player.x, y: this.player.y };
         }
         this.player.update(delta, input.x, input.y, input.sprint);
+        this.updatePortalCamera(delta);
         this.player.updateVitals(delta);
         this.updateExplored();
 
@@ -1229,6 +1389,7 @@
           this.updateMining(now);
           this.collectNearbyDrops(now);
           this.updateMobs(delta, now);
+          this.capturePortalEntrants();
           this.updateProjectiles(delta);
           this.enforceGroundObstacleInvariant();
           if (this.player.health <= 0) this.die();
@@ -1251,7 +1412,7 @@
         this.mobs,
         this.projectiles,
         this.getRoomIndex(),
-        this.giftEffects, this.farm, this.waterEffects
+        this.giftEffects, this.farm, this.waterEffects, this.portalEffects
       );
       this.syncHud(false);
 
@@ -1452,7 +1613,7 @@
       );
       const areaLabel = area === "equipment" ? "装备栏" : "背包";
 
-      button.classList.toggle("is-selected", selected);
+      button.classList.toggle("is-selected", selected || (this.swapSelection?.area === area && this.swapSelection.index === index));
       button.classList.toggle("is-empty", !stack);
       button.dataset.item = stack ? stack.itemId : "";
 
@@ -1472,12 +1633,14 @@
       }
 
       let html = Wilds.itemIcon(item);
-      if(item.skill==="culling" && area==="equipment") {
+      if((item.skill==="culling" || item.skill==="portal") && area==="equipment") {
         const remaining=Math.ceil(this.holyGunRemaining(stack));
         html+='<span class="skill-cooldown">'+(remaining?remaining+'s':'R')+'</span>';
-        html+='<span class="skill-durability">'+(stack.durability??item.maxDurability)+'/'+item.maxDurability+'</span>';
+        html+='<span class="skill-durability">'+(this.isCreative() ? '∞' : (stack.durability??item.maxDurability)+'/'+item.maxDurability)+'</span>';
       }
-      if (item.kind === "equipment" && item.maxDurability > 0) {
+      if (this.isCreative() && item.maxDurability > 0) {
+        html += '<span class="item-count">∞</span>';
+      } else if (item.kind === "equipment" && item.maxDurability > 0) {
         const maximum = item.maxDurability;
         const current = Math.max(0, Math.min(maximum, Number.isFinite(stack.durability) ? stack.durability : maximum));
         const percent = maximum > 0 ? (current / maximum) * 100 : 0;
@@ -1497,7 +1660,7 @@
       if (item.kind === "equipment") {
         const maximum = item.maxDurability || 1;
         const current = Math.round(Number.isFinite(stack.durability) ? stack.durability : maximum);
-        aria += "，耐久 " + current + " / " + maximum;
+        aria += this.isCreative() ? "，无限耐久" : "，耐久 " + current + " / " + maximum;
       } else {
         aria += "，数量 " + stack.count;
       }
@@ -1523,6 +1686,16 @@
 
     handleSlotClick(area, index) {
       if(this.paused)return;
+      if (this.isCreative()) {
+        if (area !== "equipment") return;
+        if (this.creativePick) {
+          const item = this.inventory.itemDefinition(this.creativePick);
+          if (item) this.inventory.setSlot(area,index,{itemId:item.id,count:this.inventory.maxStackFor(item.id),
+            ...(item.maxDurability > 0 ? {durability:item.maxDurability} : {})});
+        }
+        this.selectedSlot = {area,index}; this.swapSelection = null;
+        this.renderInventory(); this.syncHeldStats(); this.hideItemDetails(); return;
+      }
       const slots=this.inventory.getSlots(area);
       if(!slots || index<0 || index>=slots.length)return;
       this.cancelMining();this.hideItemDetails();this.lastSlotClick=null;
@@ -1598,7 +1771,7 @@
       this.itemDetailCount.textContent = String(stack.count);
       this.itemDetailMax.textContent = String(this.inventory.maxStackFor(stack.itemId));
 
-      if (item.kind === "equipment" && item.unbreakable) {
+      if (item.kind === "equipment" && (item.unbreakable || this.isCreative())) {
         this.itemDetailDurability.textContent = "∞";
         this.itemDetailDurabilityMax.textContent = "∞";
         this.itemDetailDurabilityRow.hidden = false;
@@ -1642,6 +1815,7 @@
     }
 
     eatFood(area, index) {
+      if (this.isCreative()) return;
       const stack = this.inventory.getSlot(area, index);
       if (!stack) return;
       const item = this.inventory.itemDefinition(stack.itemId);
@@ -1869,6 +2043,7 @@
     }
 
     openStorage(object) {
+      this.panelSelection = null;
       this.closeWorkbench();
       this.closeStele();
       this.closeFurnace();
@@ -1882,6 +2057,7 @@
     }
 
     closeStorage() {
+      this.panelSelection = null;
       if (!this.storageOpen) return;
       this.storageOpen = false;
       this.storageObject = null;
@@ -1890,11 +2066,16 @@
         this.backpackOpen || this.workbenchOpen || this.steleOpen || this.furnaceOpen;
     }
 
-    createItemButton(stack, label, onClick) {
+    createItemButton(stack, label, onClick, selection = null) {
       const button = document.createElement("button");
       button.type = "button";
       button.className = "inv-slot";
       button.setAttribute("aria-label", label);
+      if (selection) {
+        button.dataset.selectionKey = selection;
+        button.classList.toggle("is-selected", this.panelSelection === selection);
+        button.setAttribute("aria-pressed", String(this.panelSelection === selection));
+      }
       if (!stack) return button;
       const item = this.inventory.itemDefinition(stack.itemId);
       if (!item) return button;
@@ -1909,7 +2090,19 @@
         count.textContent = String(stack.count);
         button.appendChild(count);
       }
-      button.addEventListener("click", onClick);
+      button.addEventListener("click", () => {
+        if (selection) {
+          this.panelSelection = selection;
+          for (const grid of [this.chestGrid, this.chestEquipmentGrid, this.chestBackpackGrid, this.furnaceEquipmentGrid, this.furnaceBackpackGrid]) {
+            if (!grid) continue;
+            for (const slot of grid.children) {
+              const active = slot.dataset.selectionKey === selection;
+              slot.classList.toggle("is-selected", active);slot.setAttribute("aria-pressed", String(active));
+            }
+          }
+        }
+        onClick();
+      });
       return button;
     }
 
@@ -1967,27 +2160,33 @@
           this.storageObject.storage[i] = null;
           this.renderStorage();
           this.renderInventory();
-        }));
+        }, "storage:chest:" + i));
       }
 
-      this.chestBackpackGrid.replaceChildren();
-      const backpack = this.inventory.getSlots("backpack");
-      for (let i = 0; i < backpack.length; i += 1) {
-        const stack = backpack[i];
-        this.chestBackpackGrid.appendChild(this.createItemButton(stack, "背包格子 " + (i + 1), () => {
-          if (!stack) return;
-          if (!this.addToArray(this.storageObject.storage, stack)) {
-            this.showToast("储物箱空间不足");
-            return;
-          }
-          this.inventory.removeSlot("backpack", i);
-          this.renderStorage();
-          this.renderInventory();
-        }));
+      for(const [area,grid,label] of [["equipment",this.chestEquipmentGrid,"装备栏"],["backpack",this.chestBackpackGrid,"背包"]]) {
+        grid.replaceChildren();
+        const slots=this.inventory.getSlots(area);
+        for(let i=0;i<slots.length;i++) {
+          grid.appendChild(this.createItemButton(slots[i],label+"格子 "+(i+1),()=>this.storeInventorySlot(area,i),"storage:"+area+":"+i));
+        }
       }
     }
 
+    storeInventorySlot(area,index) {
+      if(this.paused || !this.storageOpen || !this.storageObject?.storage)return false;
+      const stack=this.inventory.getSlot(area,index);
+      if(!stack)return false;
+      if(!this.addToArray(this.storageObject.storage,stack)) {
+        this.showToast("储物箱空间不足");return false;
+      }
+      this.inventory.removeSlot(area,index);
+      this.swapSelection=null;
+      this.hideItemDetails();this.renderStorage();this.renderInventory();this.syncHeldStats();
+      return true;
+    }
+
     openFurnace(object) {
+      this.panelSelection = null;
       this.closeWorkbench();
       this.closeStele();
       this.closeStorage();
@@ -2001,6 +2200,7 @@
     }
 
     closeFurnace() {
+      this.panelSelection = null;
       if (!this.furnaceOpen) return;
       this.furnaceOpen = false;
       this.furnaceObject = null;
@@ -2022,7 +2222,7 @@
           const button = this.createItemButton(
             stack,
             "熔炼炉" + (area === "equipment" ? "装备栏" : "背包") + "格子 " + (i + 1),
-            () => this.useFurnaceSlot(area, i)
+            () => this.useFurnaceSlot(area, i), "furnace:" + area + ":" + i
           );
           grid.appendChild(button);
         }
@@ -2164,6 +2364,7 @@
       if (!this.backpackOpen) return;
 
       this.backpackOpen = false;
+      this.creativePick = null;
       this.backpackOverlay.hidden = true;
       this.bagButton.disabled = false;
       this.bagButton.setAttribute("aria-expanded", "false");
@@ -2221,8 +2422,8 @@
       const internalX = ((clientX - rect.left) + cropX) / scale;
       const internalY = ((clientY - rect.top) + cropY) / scale;
       return {
-        x: this.player.x - CONFIG.VIEW_WIDTH / 2 + internalX,
-        y: this.player.y - CONFIG.VIEW_HEIGHT / 2 + internalY,
+        x: this.player.x + (this.player.cameraOffset?.x || 0) - CONFIG.VIEW_WIDTH / 2 + internalX,
+        y: this.player.y + (this.player.cameraOffset?.y || 0) - CONFIG.VIEW_HEIGHT / 2 + internalY,
       };
     }
 
@@ -2244,8 +2445,8 @@
         return null;
       }
 
-      const camX = this.player.x - CONFIG.VIEW_WIDTH / 2;
-      const camY = this.player.y - CONFIG.VIEW_HEIGHT / 2;
+      const camX = this.player.x + (this.player.cameraOffset?.x || 0) - CONFIG.VIEW_WIDTH / 2;
+      const camY = this.player.y + (this.player.cameraOffset?.y || 0) - CONFIG.VIEW_HEIGHT / 2;
       const worldX = camX + internalX;
       const worldY = camY + internalY;
 
@@ -2631,7 +2832,7 @@
       if (dt <= 0) return;
       const now = performance.now();
       for (const mob of this.mobs) {
-        if (!mob.monster || mob.dying || this.closedRoomAtPosition(mob.x, mob.y)) continue;
+        if (!mob.monster || mob.dying || mob.portalFrozen || this.closedRoomAtPosition(mob.x, mob.y)) continue;
         mob.health = Math.max(0, mob.health - 10 * dt);
         mob.hitFlashUntil = now + 120;
         if (mob.health <= 0) {
@@ -2667,6 +2868,10 @@
      * 4× "bare hand / wrong tool" penalty applies.
      */
     miningProfile(kind, objectType = null) {
+      if (this.isCreative()) {
+        const fastest = Math.max(1, ...Object.values(Wilds.ITEMS).map(item => Number(item.speedMultiplier) || 1));
+        return {duration:BASE_MINING_DURATION_MS / fastest,tool:null};
+      }
       if(kind==="crop")return {duration:BASE_MINING_DURATION_MS,tool:null};
       const requiredTool = kind === "placed"
         ? Wilds.Buildings.miningTool(objectType)
@@ -2716,7 +2921,7 @@
     }
 
     handlePointerDown(event) {
-      if(this.paused)return;
+      if(this.paused || this.player.portalFrozen)return;
       if (this.backpackOpen || this.workbenchOpen || this.steleOpen || this.mapOpen || this.isDead || event.button !== 0) return;
 
       this.pointerClientX = event.clientX;
@@ -2731,8 +2936,25 @@
       const now = performance.now();
       const pointerWorld = this.getPointerWorldPosition(event.clientX, event.clientY);
 
-      // A placed object opens on a short click and is mined on a long press.
       const object = this.placedObjectAt(tile.tx, tile.ty);
+      const fixedFeature = Wilds.featureBlocksMovement(this.world.featureAt(tile.tx, tile.ty));
+      const clickedMob = pointerWorld ? this.findMobAtPointer(pointerWorld.x, pointerWorld.y) : null;
+      // Passable layers under a creature must not intercept its attack click.
+      if (clickedMob && (!object || !Wilds.Buildings.isBlocking(object))) {
+        event.preventDefault();
+        this.cancelMining();
+        if (held?.item.weaponType === "bow" && !fixedFeature) {this.performHeldClick(tile.tx,tile.ty,pointerWorld);return;}
+        if (now < this.nextAttackAt) return;
+        this.nextAttackAt = now + 360;
+        this.damageMob(clickedMob, this.player.attackDamage);
+        if (held && held.item.attackBonus > 0) {
+          this.consumeToolDurability({ area: held.area, index: held.index, itemId: held.stack.itemId });
+        }
+        this.hideItemDetails();
+        return;
+      }
+
+      // A placed object opens on a short click and is mined on a long press.
       if (object) {
         event.preventDefault();
         if (!this.withinRange(tile.tx, tile.ty, MINING_RANGE)) {
@@ -2769,26 +2991,6 @@
         } catch (error) {
           this.pointerId = null;
         }
-        return;
-      }
-
-      const fixedFeature = this.world.featureAt(tile.tx,tile.ty) !== FEATURE.NONE;
-
-      const clickedMob = pointerWorld ? this.findMobAtPointer(pointerWorld.x, pointerWorld.y) : null;
-      if (clickedMob) {
-        event.preventDefault();
-        if (held?.item.weaponType === "bow" && !fixedFeature) {this.performHeldClick(tile.tx,tile.ty,pointerWorld);return;}
-        if (now < this.nextAttackAt) return;
-        this.nextAttackAt = now + 360;
-        this.damageMob(clickedMob, this.player.attackDamage);
-        if (held && held.item.attackBonus > 0) {
-          this.consumeToolDurability({
-            area: held.area,
-            index: held.index,
-            itemId: held.stack.itemId,
-          });
-        }
-        this.hideItemDetails();
         return;
       }
 
@@ -3050,7 +3252,7 @@
     }
 
     consumeToolDurability(tool) {
-      if (!tool) return;
+      if (!tool || this.isCreative()) return;
 
       const stack = this.inventory.getSlot(tool.area, tool.index);
       if (!stack || stack.itemId !== tool.itemId) return;
@@ -3199,6 +3401,11 @@
 
     renderTarget() {
       const selected = this.getSelectedStack();
+      if (selected?.item.skill === "portal" && this.pointerInside && !this.paused && !this.isDead && !this.player.portalFrozen &&
+        !this.sleeping && !this.mapOpen && !this.backpackOpen && !this.workbenchOpen && !this.storageOpen && !this.furnaceOpen && !this.steleOpen) {
+        const point = this.getPointerWorldPosition(this.pointerClientX, this.pointerClientY);
+        if (point) return { ...this.portalPlan(point.x, point.y), kind: "portal" };
+      }
       if(!this.mining && selected?.item?.throwable==="blg" && this.pointerInside && !this.paused && !this.isDead && !this.mapOpen && !this.backpackOpen && !this.workbenchOpen && !this.storageOpen && !this.furnaceOpen && !this.sleeping) {
         const point=this.getPointerWorldPosition(this.pointerClientX,this.pointerClientY);
         if(point)return {...this.giftPlan(point.x,point.y),kind:"gift"};
@@ -3229,7 +3436,7 @@
     /* ---------------- HUD ---------------- */
 
     updateSurvival(gameHoursDelta) {
-      if (!this.player || this.isDead || gameHoursDelta <= 0) return;
+      if (this.isCreative() || !this.player || this.isDead || gameHoursDelta <= 0) return;
 
       const player = this.player;
       const day = this.clock.day;
@@ -3295,6 +3502,17 @@
         manureHoursRemaining: type === "pig" ? 12 + Math.random() * 12 : null,
         jumpCooldown: 0,
         jump: null,
+        blinkCooldown: 0,
+        blinkRetry: 0,
+        blinkFlash: 0,
+        oxygen: CONFIG.OXYGEN_MAX,
+        maxOxygen: CONFIG.OXYGEN_MAX,
+        deepWaterEscape: false,
+        portalLandEscape: false,
+        beached: false,
+        portalFrozen: false,
+        portalOwner: null,
+        waterDeathRemaining: null,
         hitFlashUntil: 0,
         dying: false,
         deathStartedAt: 0,
@@ -3322,6 +3540,7 @@
     }
 
     canMonsterAggro(mob) {
+      if (this.isCreative()) return false;
       return Boolean(this.closedRoomAtPosition(mob.x, mob.y)) === Boolean(this.closedRoomAtPosition(this.player.x, this.player.y));
     }
 
@@ -3346,6 +3565,8 @@
 
     isPositionLitBySource(x, y) {
       const room = this.closedRoomAtPosition(x, y);
+      if (Wilds.portalLightSources(this.portalEffects).some(light =>
+        this.closedRoomAtPosition(light.x, light.y) === room && Math.hypot(x - light.x, y - light.y) < light.radius)) return true;
       if (room) return this.getRoomIndex().torchesFor(room).some(torch =>
         Math.hypot(x - (torch.tx + 0.5) * CONFIG.TILE_SIZE, y - (torch.ty + 0.5) * CONFIG.TILE_SIZE) < CONFIG.VIEW_WIDTH * 0.25);
       for (const object of this.placedObjects.values()) {
@@ -3367,16 +3588,17 @@
         for (let attempt = 0; attempt < Math.min(80, cells.length * 2); attempt++) {
           const tile = cells[Math.floor(Math.random() * cells.length)];
           const x = (tile.tx + 0.5) * CONFIG.TILE_SIZE, y = (tile.ty + 0.5) * CONFIG.TILE_SIZE;
-          if (Math.hypot(x - this.player.x, y - this.player.y) > 60 * CONFIG.TILE_SIZE) continue;
+          if (!this.isWithinMobRange(x, y)) continue;
           if (this.monsterSpawnAllowed(tile.tx, tile.ty) && this.mobCanOccupy(x, y) &&
               !this.mobs.some(m => !m.dying && Math.hypot(m.x - x, m.y - y) < CONFIG.TILE_SIZE)) return tile;
         }
       }
       for (let attempt = 0; attempt < 40; attempt += 1) {
         const angle = Math.random() * Math.PI * 2;
-        const distance = 13 + Math.random() * 3;
+        const distance = 13 + Math.random() * (CONFIG.MOB_ACTIVE_RADIUS - 13);
         const tx = px + Math.round(Math.cos(angle) * distance);
         const ty = py + Math.round(Math.sin(angle) * distance);
+        if (!this.isWithinMobRange((tx + 0.5) * CONFIG.TILE_SIZE, (ty + 0.5) * CONFIG.TILE_SIZE)) continue;
         if (Math.abs(tx - px) <= 12 && Math.abs(ty - py) <= 7.5) continue;
         if (this.world.terrainAt(tx, ty) === TERRAIN.OCEAN && (this.world.waterDepthAt?.(tx,ty)===1 || !this.hasWaterSupport(tx, ty))) continue;
         if (this.isGroundBlockedForCreature(tx, ty)) continue;
@@ -3405,8 +3627,9 @@
       for (const [type,limit] of [["small_fish",6],["shark",2]]) {
         if(this.mobs.filter(m=>m.type===type&&!m.dying).length>=limit || Math.random()>0.55) continue;
         for(let attempt=0;attempt<40;attempt++) {
-          const angle=Math.random()*Math.PI*2, radius=13+Math.random()*4;
+          const angle=Math.random()*Math.PI*2, radius=13+Math.random()*(CONFIG.MOB_ACTIVE_RADIUS-13);
           const tx=this.player.tileX+Math.round(Math.cos(angle)*radius),ty=this.player.tileY+Math.round(Math.sin(angle)*radius);
+          if (!this.isWithinMobRange((tx + 0.5) * CONFIG.TILE_SIZE, (ty + 0.5) * CONFIG.TILE_SIZE)) continue;
           if(Math.abs((tx+0.5)*20-this.player.x)<=CONFIG.VIEW_WIDTH/2 && Math.abs((ty+0.5)*20-this.player.y)<=CONFIG.VIEW_HEIGHT/2)continue;
           if(this.mobCanOccupy((tx+0.5)*20,(ty+0.5)*20,{aquatic:true})) {this.spawnMob(type,tx,ty);break;}
         }
@@ -3455,8 +3678,8 @@
     rollMonsterType() {
       const night=this.lucianNightKey();
       const available=!this.lucianSpawnNights?.has(night) && !(night===1 && !this.firstNightLucianSpawned);
-      const roll=Math.random()*(available?26:25);
-      return roll<10?"zombie":roll<20?"savage_archer":roll<25?"spider":"dark_lucian";
+      const roll=Math.random()*(available?28:27);
+      return roll<10?"zombie":roll<18?"savage_archer":roll<23?"spider":roll<27?"enderman":"dark_lucian";
     }
 
     lucianNightKey() {
@@ -3470,6 +3693,10 @@
       const mob=this.spawnMob(type,tx,ty);
       if(mob && type==="dark_lucian")(this.lucianSpawnNights ||= new Set()).add(night);
       return mob;
+    }
+
+    isWithinMobRange(x, y) {
+      return Math.hypot(x - this.player.x, y - this.player.y) <= CONFIG.MOB_ACTIVE_RADIUS * CONFIG.TILE_SIZE;
     }
 
     isMobInView(mob) {
@@ -3509,14 +3736,14 @@
       return true;
     }
 
-    // All mobs / the player must end each frame on a legal tile AND the
-    // path from their last legal position must be clear. This is the "iron
-    // rule" that prevents any future creature from tunneling through walls.
+    // Walking and jumping must end on a legal tile with a clear path from
+    // the last safe position. Intentional teleports validate their landing
+    // and replace that safe position atomically before this check.
     enforceGroundObstacleInvariant() {
       const player = this.player;
       const playerLastSafe = this.lastPlayerSafe;
-      const playerCurrentValid = player.canOccupy(player.x, player.y);
-      const playerPathClear = !playerLastSafe || this.creaturePathClear(
+      const playerCurrentValid = player.portalFrozen || player.canOccupy(player.x, player.y);
+      const playerPathClear = player.portalFrozen || !playerLastSafe || this.creaturePathClear(
         playerLastSafe.x,
         playerLastSafe.y,
         player.x,
@@ -3539,6 +3766,7 @@
       }
 
       for (const mob of this.mobs) {
+        if (mob.portalFrozen) continue;
         const lastSafeValid = Number.isFinite(mob.lastSafeX) &&
           Number.isFinite(mob.lastSafeY) &&
           this.mobCanOccupy(mob.lastSafeX, mob.lastSafeY, mob);
@@ -3575,6 +3803,9 @@
      */
     mobCanOccupy(x, y, mob = null) {
       if (this.groundAreaBlocked(x - 5, y - 5, x + 5, y + 6)) return false;
+      // Once exposed, water is traversable during the fatal countdown. Normal
+      // endermen still avoid it, but collision repair must not eject an arrival.
+      const waterExposedEnderman = mob?.type === "enderman" && mob.waterDeathRemaining != null;
       const halfWidth = 5;
       const minTileX = Math.floor((x - halfWidth) / CONFIG.TILE_SIZE);
       const maxTileX = Math.floor((x + halfWidth) / CONFIG.TILE_SIZE);
@@ -3583,8 +3814,10 @@
       for (let ty = minTileY; ty <= maxTileY; ty += 1) {
         for (let tx = minTileX; tx <= maxTileX; tx += 1) {
           const water=this.world.terrainAt(tx,ty)===TERRAIN.OCEAN;
+          // Endermen fear both shallow and deep water, including supported water tiles.
+          if (mob?.type === "enderman" && water && !waterExposedEnderman) return false;
           const depth=water?(this.world.waterDepthAt?.(tx,ty)??2):0;
-          if(mob?.aquatic ? depth!==2 || this.hasWaterSupport(tx,ty) : depth===2 && !this.hasWaterSupport(tx,ty))return false;
+          if(mob?.aquatic ? !mob.portalLandEscape && (depth!==2 || this.hasWaterSupport(tx,ty)) : depth===2 && !this.hasWaterSupport(tx,ty) && !mob?.deepWaterEscape && !waterExposedEnderman)return false;
           if (Wilds.featureBlocksMovement(this.world.featureAt(tx, ty))) return false;
         }
       }
@@ -3594,6 +3827,7 @@
     // Move a mob toward (dx,dy), sliding along an obstacle axis if the full
     // diagonal is blocked. Always routes through the collision system.
     moveMob(mob, dx, dy, dt) {
+      if (mob.portalFrozen || mob.beached) return false;
       const length = Math.hypot(dx, dy) || 1;
       const stepX = (dx / length) * mob.speed * dt;
       const stepY = (dy / length) * mob.speed * dt;
@@ -3660,15 +3894,307 @@
       if (t >= 1) mob.jump = null;
     }
 
+    /* ---------------- Paired portals and involuntary immersion ---------------- */
+
+    portalPlan(worldX, worldY, fromMap = false) {
+      const tx = Math.floor(worldX / CONFIG.TILE_SIZE), ty = Math.floor(worldY / CONFIG.TILE_SIZE);
+      const x = (tx + 0.5) * CONFIG.TILE_SIZE, y = (ty + 0.5) * CONFIG.TILE_SIZE;
+      const tiles = [];
+      for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) tiles.push({ tx: tx + dx, ty: ty + dy });
+      const cameraX = this.player.x + (this.player.cameraOffset?.x || 0), cameraY = this.player.y + (this.player.cameraOffset?.y || 0);
+      const visible = Number.isFinite(worldX) && Number.isFinite(worldY) && Math.abs(x - cameraX) <= CONFIG.VIEW_WIDTH / 2 && Math.abs(y - cameraY) <= CONFIG.VIEW_HEIGHT / 2;
+      const mapAllowed = Number.isFinite(worldX) && Number.isFinite(worldY) &&
+        Math.hypot(x - this.player.x, y - this.player.y) <= CONFIG.MAP_PORTAL_RANGE * CONFIG.TILE_SIZE &&
+        Boolean(this.explored?.has(this.tileKey(tx, ty)));
+      return { tx, ty, x, y, tiles, origin: { x: this.player.x, y: this.player.y }, radius: CONFIG.TILE_SIZE * 1.5,
+        valid: (fromMap ? mapAllowed : visible) && tiles.some(tile => !this.isGroundBlockedForCreature(tile.tx, tile.ty)) };
+    }
+
+    startPortal(fromMap = false) {
+      const held = this.getHeldEquipment();
+      if (held?.item.skill !== "portal" || this.isDead || this.paused || this.sleeping || this.player.portalFrozen ||
+        (fromMap ? !this.mapOpen : this.mapOpen || !this.pointerInside) ||
+        this.backpackOpen || this.workbenchOpen || this.storageOpen || this.furnaceOpen || this.steleOpen) return false;
+      if (this.holyGunRemaining(held.stack) > 0) { this.showToast("传送法阵冷却中"); return false; }
+      const point = fromMap ? this.mapPortalTarget : this.getPointerWorldPosition(this.pointerClientX, this.pointerClientY);
+      if (!point) return false;
+      const target = this.portalPlan(point.x, point.y, fromMap);
+      if (!target.valid) { this.showToast("此处无法生成虫洞"); return false; }
+      if (fromMap) this.closeMap();
+      const cast = { id: (this.portalSequence = (this.portalSequence || 0) + 1), age: 0, radius: target.radius,
+        ends: [{ x: this.player.x, y: this.player.y }, { x: target.x, y: target.y }], selected: [], captured: false, swapped: false, released: false };
+      (this.portalEffects ||= []).push(cast);
+      held.stack.skillReadyAt = (this.holyGunTime || 0) + 8;
+      this.cancelMining();
+      this.consumeToolDurability({ area: held.area, index: held.index, itemId: held.item.id });
+      this.audio?.playPortalOpen?.();
+      return true;
+    }
+
+    capturePortalUnits(cast) {
+      if (cast.swapped) return;
+      cast.captured = true;
+      const selected = new Set(cast.selected.map(entry => entry.unit));
+      // First-outline entrants share the cast's fixed exchange/release deadlines.
+      for (const unit of [this.player, ...this.mobs]) {
+        if (unit.health <= 0 || unit.dying || unit.portalFrozen || selected.has(unit)) continue;
+        const distances = cast.ends.map(end => Math.hypot(unit.x - end.x, unit.y - end.y));
+        let from = distances[0] <= distances[1] ? 0 : 1;
+        if (distances[from] > cast.radius) continue;
+        const origin = cast.ends[from];
+        cast.selected.push({ unit, from, dx: unit.x - origin.x, dy: unit.y - origin.y, teleported: false, released: false });
+        cast.released = false;
+        unit.portalFrozen = true; unit.portalOwner = cast.id; unit.moving = false;
+        if (unit === this.player) { this.cancelMining(); this.clearFoodPress(); }
+        else unit.jump = null;
+      }
+    }
+
+    portalGroundClear(unit, x, y) {
+      return unit === this.player ? !this.groundAreaBlocked(x - 4, y + 1, x + 4, y + 8) :
+        !this.groundAreaBlocked(x - 5, y - 5, x + 5, y + 6);
+    }
+
+    portalLanding(unit, desired, end, reserved) {
+      const free = (x, y) => this.portalGroundClear(unit, x, y) &&
+        !reserved.some(other => Math.hypot(other.x - x, other.y - y) < 10);
+      // Preserve even very close original formations; only fixtures may displace an exact offset.
+      if (this.portalGroundClear(unit, desired.x, desired.y)) return desired;
+      const cx = Math.floor(end.x / CONFIG.TILE_SIZE), cy = Math.floor(end.y / CONFIG.TILE_SIZE);
+      // The destination's nine cells and their immediate neighbours come first.
+      // If construction changed during preparation, search further without walking through walls.
+      for (let radius = 2; radius <= 16; radius++) {
+        const candidates = [];
+        for (let dy = -radius; dy <= radius; dy++) for (let dx = -radius; dx <= radius; dx++) {
+          if (radius > 2 && Math.max(Math.abs(dx), Math.abs(dy)) !== radius) continue;
+          const x = (cx + dx + 0.5) * CONFIG.TILE_SIZE, y = (cy + dy + 0.5) * CONFIG.TILE_SIZE;
+          candidates.push({ x, y, distance: Math.hypot(x - desired.x, y - desired.y) });
+        }
+        candidates.sort((a, b) => a.distance - b.distance);
+        const candidate = candidates.find(p => free(p.x, p.y));
+        if (candidate) return candidate;
+      }
+      return null;
+    }
+
+    swapPortalUnits(cast, entries = cast.selected.filter(entry => !entry.teleported)) {
+      cast.swapped = true;
+      this.audio?.playPortalSwap?.();
+      for (const entry of entries) entry.teleported = true;
+      const reserved = [];
+      // Resolve both directions from the same snapshot before moving anybody.
+      const moves = entries.filter(({ unit }) => unit.health > 0 && !unit.dying && unit.portalOwner === cast.id).map(entry => {
+        const end = cast.ends[1 - entry.from];
+        const landing = this.portalLanding(entry.unit, { x: end.x + entry.dx, y: end.y + entry.dy }, end, reserved);
+        if (landing) reserved.push(landing);
+        return { ...entry, landing };
+      });
+      for (const { unit, landing } of moves) {
+        if (!landing) continue;
+        const oldX = unit.x, oldY = unit.y;
+        unit.x = landing.x; unit.y = landing.y;
+        if (unit === this.player) {
+          const cameraX = oldX + (unit.cameraOffset?.x || 0) - unit.x;
+          const cameraY = oldY + (unit.cameraOffset?.y || 0) - unit.y;
+          const duration = Math.min(Wilds.PORTAL_TIMING.CAMERA_RETURN_MAX, Math.max(Wilds.PORTAL_TIMING.CAMERA_RETURN,
+            Math.hypot(cameraX, cameraY) / CONFIG.VIEW_WIDTH * Wilds.PORTAL_TIMING.CAMERA_RETURN));
+          unit.cameraOffset = { x: cameraX, y: cameraY, startX: cameraX, startY: cameraY, age: 0, duration, returning: true };
+          this.lastPlayerSafe = { ...landing };
+          this.lastStepPosition = { ...landing };
+          unit.isDiving = unit.waterDepth === 2; unit.isWading = unit.waterDepth === 1;
+          this.updateExplored();
+        } else {
+          unit.lastSafeX = unit.x; unit.lastSafeY = unit.y;
+          const tx = Math.floor(unit.x / CONFIG.TILE_SIZE), ty = Math.floor(unit.y / CONFIG.TILE_SIZE);
+          const water = this.world.terrainAt(tx, ty) === TERRAIN.OCEAN;
+          const deep = water && (this.world.waterDepthAt?.(tx, ty) ?? 2) === 2 && !this.hasWaterSupport(tx, ty);
+          unit.deepWaterEscape = !unit.aquatic && deep;
+          unit.portalLandEscape = Boolean(unit.aquatic && !deep);
+          unit.beached = Boolean(unit.aquatic && !water);
+          if (unit.beached) { unit.moving = false; unit.aggro = false; }
+        }
+      }
+    }
+
+    releasePortalUnits(cast, entries = cast.selected) {
+      for (const entry of entries) {
+        const { unit } = entry;
+        entry.released = true;
+        if (unit.portalOwner !== cast.id) continue;
+        unit.portalFrozen = false; unit.portalOwner = null;
+        // Arrival hazards begin only after the invulnerable outline has ended.
+        if (unit !== this.player && !unit.dying && unit.health > 0) this.updateMobOxygen(unit, 0);
+      }
+      cast.released = cast.age >= Wilds.PORTAL_TIMING.RELEASE && cast.selected.every(entry => entry.released);
+    }
+
+    capturePortalEntrants() {
+      for (const cast of this.portalEffects || []) {
+        if (cast.age >= Wilds.PORTAL_TIMING.PREPARE && cast.age < Wilds.PORTAL_TIMING.EXCHANGE) this.capturePortalUnits(cast);
+      }
+    }
+
+    updatePortalEffects(dt) {
+      for (const cast of this.portalEffects || []) {
+        cast.age += dt;
+        if (!cast.captured && cast.age >= Wilds.PORTAL_TIMING.PREPARE - 1e-9) this.capturePortalUnits(cast);
+        else if (cast.age >= Wilds.PORTAL_TIMING.PREPARE && cast.age < Wilds.PORTAL_TIMING.EXCHANGE) this.capturePortalUnits(cast);
+        if (!cast.swapped && cast.age >= Wilds.PORTAL_TIMING.EXCHANGE - 1e-9) this.swapPortalUnits(cast);
+        if (!cast.released && cast.age >= Wilds.PORTAL_TIMING.RELEASE - 1e-9) this.releasePortalUnits(cast);
+      }
+      this.portalEffects = (this.portalEffects || []).filter(cast => cast.age < Wilds.PORTAL_TIMING.END - 1e-9);
+    }
+
+    updatePortalCamera(dt) {
+      const offset = this.player.cameraOffset;
+      if (!offset?.returning) return;
+      offset.age += dt;
+      const t = Math.min(1, offset.age / (offset.duration || Wilds.PORTAL_TIMING.CAMERA_RETURN)), factor = 1 - t * t * (3 - 2 * t);
+      offset.x = offset.startX * factor; offset.y = offset.startY * factor;
+      if (t >= 1) this.player.cameraOffset = null;
+    }
+
+    clearPortalEffects() {
+      for (const cast of this.portalEffects || []) this.releasePortalUnits(cast);
+      this.portalEffects = [];
+      if (this.player) { this.player.portalFrozen = false; this.player.portalOwner = null; this.player.cameraOffset = null; }
+    }
+
+    updateMobOxygen(mob, dt) {
+      if (mob.portalFrozen || mob.dying || !this.world?.terrainAt) return;
+      const tx = Math.floor(mob.x / CONFIG.TILE_SIZE), ty = Math.floor(mob.y / CONFIG.TILE_SIZE);
+      const water = this.world.terrainAt(tx, ty) === TERRAIN.OCEAN;
+      if (mob.type === "enderman") {
+        if (mob.waterDeathRemaining != null) {
+          mob.waterDeathRemaining = Math.max(0, mob.waterDeathRemaining - dt);
+          if (mob.waterDeathRemaining <= 1e-9) this.beginMobDeath(mob, "water");
+          return;
+        }
+        if (water) {
+          mob.health = 1;
+          mob.waterDeathRemaining = 1.5;
+          return;
+        }
+      }
+      if (mob.deepWaterEscape && this.mobCanOccupy(mob.x, mob.y, { ...mob, deepWaterEscape: false })) mob.deepWaterEscape = false;
+      if (mob.portalLandEscape && this.mobCanOccupy(mob.x, mob.y, { ...mob, portalLandEscape: false })) mob.portalLandEscape = false;
+      if (mob.aquatic) {
+        mob.beached = !water;
+        if (mob.beached) {
+          mob.moving = false; mob.aggro = false;
+          mob.health = Math.max(0, mob.health - dt * 10);
+          if (mob.health <= 0) this.beginMobDeath(mob, "stranding");
+        }
+        return; // Aquatic creatures breathe in water and suffocate only on land.
+      }
+      const deep = water && (this.world.waterDepthAt?.(tx, ty) ?? 2) === 2 && !this.hasWaterSupport(tx, ty);
+      mob.oxygen ??= CONFIG.OXYGEN_MAX;
+      mob.inDeepWater = deep;
+      if (deep) {
+        if (mob.oxygen > 0) mob.oxygen = Math.max(0, mob.oxygen - dt * CONFIG.OXYGEN_DRAIN_PER_SECOND);
+        else {
+          mob.health = Math.max(0, mob.health - dt * CONFIG.DROWN_DAMAGE_PER_SECOND);
+          if (mob.health <= 0) this.beginMobDeath(mob, "drowning");
+        }
+      } else mob.oxygen = Math.min(CONFIG.OXYGEN_MAX, mob.oxygen + dt * CONFIG.OXYGEN_REGEN_PER_SECOND);
+    }
+
+    endermanHovered(mob, point) {
+      return !this.isCreative() && this.endermanHitTest(mob, point);
+    }
+
+    endermanHitTest(mob, point) {
+      if (!point || !this.isMobInView(mob)) return false;
+      const x = point.x - Math.round(mob.x), y = point.y - Math.round(mob.y);
+      if (!Wilds.ENDERMAN_PARTS.some(([left, top, width, height]) =>
+        x >= left && x < left + width && y >= top && y < top + height)) return false;
+      // An opaque roof or a tall foreground fixture hides the real model.
+      if (this.renderer) {
+        const objects = [...this.placedObjects.values()];
+        if (this.renderer.mobOccluders(mob, [...objects, ...(this.renderer.naturalFixtures || [])]).some(object => {
+          const b = this.renderer.fixtureBounds(object);
+          return point.x >= b.left && point.x < b.right && point.y >= b.top && point.y < b.bottom;
+        })) return false;
+        if (objects.some(object => object.type === "roof" &&
+          !this.renderer.transparentRoofTiles?.has(`${object.tx},${object.ty}`) && (() => {
+            const b = this.renderer.fixtureBounds(object);
+            return point.x >= b.left && point.x < b.right && point.y >= b.top && point.y < b.bottom;
+          })())) return false;
+      }
+      return true;
+    }
+
+    provokeEnderman(mob, now = performance.now()) {
+      if (this.isCreative()) return;
+      if (mob.dying || mob.health <= 0) return;
+      mob.provoked = true;
+      mob.aggro = !this.isDead && this.isMobInView(mob) && this.canMonsterAggro(mob);
+      if (mob.aggro) this.tryEndermanBlink(mob, now);
+    }
+
+    endermanBlinkLanding(mob) {
+      const tileSize = CONFIG.TILE_SIZE, player = this.player;
+      const canLand = (x, y) => Math.hypot(x - player.x, y - player.y) >= 12 &&
+        this.mobCanOccupy(x, y, mob) && this.canMonsterAggro({ x, y }) &&
+        !this.mobs.some(other => other !== mob && !other.dying && Math.hypot(other.x - x, other.y - y) < 12);
+      const [forwardX, forwardY] = ({ up: [0, -1], down: [0, 1], left: [-1, 0], right: [1, 0] })[this.player.facing] || [0, 1];
+      const behind = { x: player.x - forwardX * tileSize, y: player.y - forwardY * tileSize };
+      if (canLand(behind.x, behind.y)) return behind;
+
+      // Search outward for the nearest legal cell, irrespective of intervening walls.
+      // The mob's current legal position provides a finite upper bound and a fallback.
+      let best = canLand(mob.x, mob.y) ? { x: mob.x, y: mob.y } : null;
+      let bestDistance = best ? Math.hypot(best.x - player.x, best.y - player.y) : Infinity;
+      const maxRadius = Math.ceil(Math.hypot(mob.x - player.x, mob.y - player.y) / tileSize) + 1;
+      const offset = Math.max(Math.abs(player.x - (player.tileX + 0.5) * tileSize), Math.abs(player.y - (player.tileY + 0.5) * tileSize));
+      for (let radius = 1; radius <= maxRadius; radius++) {
+        for (let dy = -radius; dy <= radius; dy++) for (let dx = -radius; dx <= radius; dx += Math.abs(dy) === radius ? 1 : 2 * radius) {
+          const x = (player.tileX + dx + 0.5) * tileSize, y = (player.tileY + dy + 0.5) * tileSize;
+          const distance = Math.hypot(x - player.x, y - player.y);
+          if (distance < bestDistance && canLand(x, y)) { best = { x, y }; bestDistance = distance; }
+        }
+        // No cell outside this square can be closer than its nearest outer edge.
+        if (bestDistance <= (radius + 0.5) * tileSize - offset) break;
+      }
+      return best;
+    }
+
+    tryEndermanBlink(mob, now) {
+      if (!mob.aggro || mob.portalFrozen || this.isDead || mob.blinkCooldown > 0 || mob.blinkRetry > 0 || !this.canMonsterAggro(mob)) return false;
+      if (this.world?.terrainAt?.(this.player.tileX, this.player.tileY) === TERRAIN.OCEAN) return false;
+      const landing = this.endermanBlinkLanding(mob);
+      if (landing) {
+        mob.blinkFromX = mob.x; mob.blinkFromY = mob.y; mob.blinkFlash = 0.4;
+        mob.x = mob.lastSafeX = landing.x; mob.y = mob.lastSafeY = landing.y;
+        mob.blinkCooldown = 8;
+        mob.attackAt = now + 1000;
+        this.audio?.playEndermanBlink?.();
+        // Teleportation ignores the route; the follow-up melee still needs range and a clear hit.
+        if (Math.hypot(mob.x - this.player.x, mob.y - this.player.y) <= 1.5 * CONFIG.TILE_SIZE &&
+          this.creaturePathClear(mob.x, mob.y, this.player.x, this.player.y, (x, y) => this.mobCanOccupy(x, y, mob))) this.damagePlayer(30, mob);
+        return true;
+      }
+      // Only a world with no legal landing at all needs a delayed retry.
+      mob.blinkRetry = 0.25;
+      return false;
+    }
+
     updateMobs(dt, now) {
       const player = this.player;
       const playerX = player.x;
       const playerY = player.y;
       const daylight = this.clock.hours >= 6 && this.clock.hours < 18;
 
+      // Cleanup precedes damage/death animation so distant units cannot linger.
+      for (let i = this.mobs.length - 1; i >= 0; i--) {
+        if (!this.isWithinMobRange(this.mobs[i].x, this.mobs[i].y)) this.mobs.splice(i, 1);
+      }
       if (daylight) {
         this.applyDaylightDamage(dt);
       }
+      const gazeEnabled = this.pointerInside && !this.paused && !this.isDead && !this.sleeping &&
+        !this.backpackOpen && !this.workbenchOpen && !this.steleOpen && !this.storageOpen && !this.furnaceOpen && !this.mapOpen;
+      const gaze = gazeEnabled ? this.getPointerWorldPosition(this.pointerClientX, this.pointerClientY) : null;
 
       for (let i = this.mobs.length - 1; i >= 0; i -= 1) {
         const mob = this.mobs[i];
@@ -3681,10 +4207,6 @@
         const dx = playerX - mob.x;
         const dy = playerY - mob.y;
         const distance = Math.hypot(dx, dy);
-        if (distance > 60 * CONFIG.TILE_SIZE) {
-          this.mobs.splice(i, 1);
-          continue;
-        }
 
         // Living pigs produce one dropping every 12–24 game hours (~1–2/day).
         if (mob.type === "pig") {
@@ -3696,6 +4218,11 @@
         }
         mob.jumpCooldown = Math.max(0, mob.jumpCooldown - dt);
         mob.cullingCooldown=Math.max(0,(mob.cullingCooldown||0)-dt);
+        mob.blinkCooldown = Math.max(0, (mob.blinkCooldown || 0) - dt);
+        mob.blinkRetry = Math.max(0, (mob.blinkRetry || 0) - dt);
+        mob.blinkFlash = Math.max(0, (mob.blinkFlash || 0) - dt);
+        this.updateMobOxygen(mob, dt);
+        if (mob.dying || mob.portalFrozen || mob.beached) continue;
         const inView = this.isMobInView(mob);
 
         if (mob.aquatic) {
@@ -3706,7 +4233,8 @@
           } else if(now<mob.fleeUntil)this.moveMob(mob,-dx,-dy,dt);
           else this.wanderMob(mob,now,dt);
         } else if (mob.monster) {
-          mob.aggro = inView && this.canMonsterAggro(mob);
+          if (mob.type === "enderman" && !mob.provoked && this.endermanHovered(mob, gaze)) mob.provoked = true;
+          mob.aggro = !this.isDead && inView && this.canMonsterAggro(mob) && (mob.type !== "enderman" || mob.provoked);
 
           if (mob.type === "spider" && mob.jump) {
             this.updateSpiderJump(mob, dt);
@@ -3714,16 +4242,20 @@
           }
           if (mob.aggro) {
             const tileDistance = distance / CONFIG.TILE_SIZE;
-            if (mob.type === "spider" && this.trySpiderJump(mob)) {
+            if (mob.type === "enderman" && this.tryEndermanBlink(mob, now)) {
+              continue;
+            } else if (mob.type === "spider" && this.trySpiderJump(mob)) {
               this.updateSpiderJump(mob, dt);
             } else if (mob.type === "dark_lucian") {
               const firing=Boolean(mob.culling) || mob.cullingCooldown<=0;
               this.updateCulling(mob,dt);
               if(firing && tileDistance>1.15)this.moveMob(mob,dx,dy,dt);
             } else if (MOB_TYPES[mob.type]?.attack === "melee") {
-              if (tileDistance > 1.15) {
+              if (tileDistance > 1.15 || (mob.type === "enderman" &&
+                this.world?.terrainAt?.(player.tileX, player.tileY) === TERRAIN.OCEAN)) {
                 this.moveMob(mob, dx, dy, dt);
-              } else if (now >= mob.attackAt) {
+              } else if (now >= mob.attackAt && (mob.type !== "enderman" ||
+                this.creaturePathClear(mob.x, mob.y, playerX, playerY, (x, y) => this.mobCanOccupy(x, y, mob)))) {
                 mob.attackAt = now + 1000;
                 this.damagePlayer(MOB_TYPES[mob.type]?.damage || 15, mob);
               }
@@ -3782,7 +4314,7 @@
 
     startHolyGun() {
       const held=this.getHeldEquipment();
-      if(held?.item.id!=="lucian_holy_gun" || this.isDead || this.paused || this.sleeping)return false;
+      if(held?.item.id!=="lucian_holy_gun" || this.player.portalFrozen || this.isDead || this.paused || this.sleeping)return false;
       if(this.holyGunRemaining(held.stack)>0){this.showToast("圣枪洗礼冷却中");return false;}
       if(!this.pointerInside){this.showToast("将鼠标移到游戏画面内瞄准");return false;}
       held.stack.skillReadyAt=(this.holyGunTime||0)+20;
@@ -3812,6 +4344,7 @@
     }
 
     spawnFirstNightLucian(force=false) {
+      if (this.isCreative()) return false;
       const firstNight=(this.clock.day===1 && this.clock.hours>=20)||(this.clock.day===2 && this.clock.hours<6);
       if(this.firstNightLucianSpawned || !firstNight || (!force && this.clock.day===1 && this.clock.hours<this.firstNightLucianHour))return false;
       if(!force && (this.elapsed||0)<(this.nextFirstNightLucianAttempt||0))return false;
@@ -3844,7 +4377,7 @@
     }
 
     beginMobDeath(mob, source = "player") {
-      if (!mob || mob.dying) return;
+      if (!mob || mob.dying || mob.portalFrozen) return;
       mob.dying = true;
       mob.deathSource = source;
       mob.health = 0;
@@ -3869,15 +4402,19 @@
     }
 
     damageMob(mob, amount, source = "player") {
-      if (!mob || mob.dying) return;
+      if (!mob || mob.dying || mob.portalFrozen) return;
       mob.health = Math.max(0, mob.health - amount);
       mob.hitFlashUntil = performance.now() + 160;
       if (this.audio) {
         if (mob.monster) this.audio.playMonsterHurt();
         else this.audio.playAnimalHurt();
       }
-      if(mob.type === "shark") {mob.provoked=true;mob.aggro=this.canMonsterAggro(mob);}
-      else if (mob.monster) {
+      if (this.isCreative()) { mob.provoked = false; mob.aggro = false; mob.fleeUntil = 0; }
+      else if(mob.type === "shark") {mob.provoked=true;mob.aggro=this.canMonsterAggro(mob);}
+      else if (mob.type === "enderman") {
+        // Friendly fire can hurt this mob, but only the player provokes it.
+        if (source === "player") this.provokeEnderman(mob);
+      } else if (mob.monster) {
         mob.aggro = this.canMonsterAggro(mob);
       } else {
         const dx = mob.x - this.player.x;
@@ -3892,7 +4429,7 @@
     }
 
     damagePlayer(amount, attacker = null) {
-      if (this.isDead) return;
+      if (this.isCreative() || this.isDead || this.player.portalFrozen) return;
       this.player.takeDamage(amount, { type: attacker ? "monster" : "unknown", name: attacker?.name, monsterType: attacker?.type, skill:attacker?.skill });
       if (this.audio) this.audio.playPlayerHurt();
       this.showToast("受到 " + amount + " 点伤害");
@@ -3987,7 +4524,7 @@
         let removed = false;
         if (projectile.owner === "player") {
           for (const mob of this.mobs) {
-            if(mob.dying || mob.health<=0)continue;
+            if(mob.dying || mob.health<=0 || mob.portalFrozen)continue;
             if (this.segmentHitsCircle(oldX, oldY, nextX, nextY, mob.x, mob.y, 11)) {
               this.damageMob(mob, projectile.damage);
               this.projectiles.splice(i, 1);
@@ -3999,7 +4536,7 @@
           // Monster arrows hurt animals and other monsters too, but never
           // the archer that fired them.
           for (const mob of this.mobs) {
-            if (mob.dying || mob.health<=0 || mob.id === projectile.sourceMobId) continue;
+            if (mob.dying || mob.health<=0 || mob.portalFrozen || mob.id === projectile.sourceMobId) continue;
             if (this.segmentHitsCircle(oldX, oldY, nextX, nextY, mob.x, mob.y, 11)) {
               this.damageMob(mob, projectile.damage, "monster");
               this.projectiles.splice(i, 1);
@@ -4009,7 +4546,7 @@
           }
           if (
             !removed &&
-            !this.isDead && this.player.health>0 &&
+            !this.isCreative() && !this.isDead && !this.player.portalFrozen && this.player.health>0 &&
             this.segmentHitsCircle(oldX, oldY, nextX, nextY, this.player.x, this.player.y, 10)
           ) {
             this.damagePlayer(projectile.damage, { name: projectile.sourceName || "未知怪物",skill:projectile.skill });
@@ -4076,7 +4613,8 @@
     findMobAtPointer(worldX, worldY) {
       return this.mobs.find((mob) =>
         !mob.dying &&
-        Math.hypot(mob.x - worldX, mob.y - worldY) < 14 &&
+        (mob.type === "enderman" ? this.endermanHitTest(mob, { x: worldX, y: worldY }) :
+          Math.hypot(mob.x - worldX, mob.y - worldY) < 14) &&
         Math.hypot(mob.x - this.player.x, mob.y - this.player.y) <= 2.6 * CONFIG.TILE_SIZE
       ) || null;
     }
@@ -4133,6 +4671,7 @@
 
     syncVitals(force) {
       const player = this.player;
+      this.vitalsPanel.hidden = this.isCreative();
       const health = Math.max(0, Math.min(player.maxHealth, player.health));
       const oxygen = Math.max(0, Math.min(player.maxOxygen, player.oxygen));
       const satiety = Math.max(0, Math.min(player.maxSatiety, player.satiety));
@@ -4167,7 +4706,7 @@
       }
 
       if(this.foodRestriction) {
-        this.foodRestriction.hidden=!(player.manureDietHours>0);
+        this.foodRestriction.hidden=this.isCreative() || !(player.manureDietHours>0);
         this.foodRestriction.textContent="异食：仅可食粪便（剩余"+Math.ceil(player.manureDietHours||0)+"小时）";
       }
       const diving = Boolean(player.isDiving);

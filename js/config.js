@@ -31,6 +31,9 @@
     // many entries (oldest evicted first).
     CHUNK_SIZE: 16,
     CACHE_LIMIT: 192,
+    // Natural population searches and distant-entity cleanup share this radius.
+    MOB_ACTIVE_RADIUS: 50,
+    MAP_PORTAL_RANGE: 60,
     // Per-seed calibration: sample this many points to pin the ocean/rock
     // cut-offs so the target terrain ratios hold regardless of the seed.
     CALIBRATION_SAMPLES: 32768,
@@ -87,6 +90,22 @@
   // The order the player asked for: rock, grass, ocean.
   const TERRAIN_ORDER = Object.freeze([TERRAIN.ROCK, TERRAIN.GRASS, TERRAIN.OCEAN]);
 
+  // Share the actual silhouette between drawing and gaze detection (no tile-sized hitbox).
+  const ENDERMAN_PARTS = Object.freeze([
+    [-4, -29, 8, 8], [-3, -20, 6, 12],
+    [-7, -20, 2, 20], [5, -20, 2, 20],
+    [-3, -8, 2, 16], [1, -8, 2, 16],
+  ].map(part => Object.freeze(part)));
+  const PORTAL_PALETTE = Object.freeze({ core: "#01030b", body: "#030917", edge: "#0a1d51", glow: "#15377e" });
+  const PORTAL_TIMING = Object.freeze({ PREPARE: 1.5, EXCHANGE: 2, RELEASE: 2.5, END: 3, CAMERA_RETURN: 0.2, CAMERA_RETURN_MAX: 0.5 });
+  function portalLightSources(effects = []) {
+    return effects.filter(cast => cast.age < PORTAL_TIMING.END).flatMap(cast => cast.ends.map(end => ({
+      x: end.x, y: end.y,
+      radius: CONFIG.TILE_SIZE * (cast.age >= PORTAL_TIMING.PREPARE ? 6 : 4),
+      strength: cast.age >= PORTAL_TIMING.PREPARE ? 0.98 : 0.85,
+    })));
+  }
+
   globalThis.Wilds = Object.assign(globalThis.Wilds || {}, {
     CONFIG,
     TERRAIN,
@@ -95,5 +114,9 @@
     featureBlocksMovement,
     TERRAIN_META,
     TERRAIN_ORDER,
+    ENDERMAN_PARTS,
+    PORTAL_PALETTE,
+    PORTAL_TIMING,
+    portalLightSources,
   });
 })();
