@@ -57,7 +57,22 @@ test("portals illuminate both ends, brighten a wider area after preparation and 
   g.updatePortalEffects(1.499);assert.equal(g.portalEffects.length,1);assert(g.isPositionLitBySource(70,10));
   g.updatePortalEffects(.001);assert.equal(g.portalEffects.length,0);assert(!g.isPositionLitBySource(70,10));assert(g.monsterSpawnAllowed(3,0));
 });
-test("R activation consumes one use, starts eight-second per-item cooldown and rejects invalid casts transactionally",()=>{
+test("creative portal casts can be repeated without a cooldown or durability cost", () => {
+  const g = game();
+  g.sessionMode = "creative";
+  g.gameMode = "creative";
+  const portal = g.inventory.equipment[0];
+  assert(g.startPortal());
+  assert(g.startPortal());
+  assert.equal(g.portalEffects.length, 2);
+  assert.equal(portal.durability, 15);
+  assert.equal(g.holyGunRemaining(portal), 0);
+  g.gameMode = "survival";
+  assert(g.startPortal());
+  assert.equal(g.holyGunRemaining(portal), 8);
+  assert(!g.startPortal());
+});
+test("activation consumes one use, starts an eight-second cooldown and rejects invalid casts transactionally",()=>{
   const g=game();assert(g.startPortal());assert.equal(g.inventory.equipment[0].durability,14);assert.equal(g.holyGunRemaining(g.inventory.equipment[0]),8);
   assert(!g.startPortal());assert.equal(g.inventory.equipment[0].durability,14);
   g.holyGunTime=8;g.getPointerWorldPosition=()=>({x:510,y:10});assert(!g.startPortal());assert.equal(g.inventory.equipment[0].durability,14);

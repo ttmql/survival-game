@@ -1039,7 +1039,7 @@ h1 {
 }
 
 /* ---------- Equipment durability ---------- */
-.skill-cooldown, .skill-durability {
+.skill-cooldown, .skill-durability, .skill-binding, .skill-name {
   position: absolute;
   z-index: 3;
   padding: 1px 2px;
@@ -1051,6 +1051,110 @@ h1 {
 }
 .skill-cooldown { top: 2px; right: 2px; }
 .skill-durability { bottom: 8px; left: 2px; color: #e0e9ce; }
+.skill-binding { bottom: 8px; right: 2px; min-width: 14px; text-align: center; color: #f2d89a; }
+.skill-name { top: 2px; left: 2px; color: #d1fff2; font-size: 9px; }
+
+#summonerOverlay { z-index: 999; }
+.summoner-panel { width: min(100%, 760px); }
+.summoner-spells {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 188px), 1fr));
+  gap: 10px;
+}
+.summoner-spell {
+  display: grid;
+  gap: 5px;
+  text-align: left;
+  border: 1px solid #465a49;
+  border-radius: 6px;
+  padding: 10px 12px;
+  background: #23342a;
+  color: #e3ebdb;
+  cursor: pointer;
+}
+.summoner-spell strong { color: var(--spell-color); font-size: 14px; }
+.summoner-spell span { font-size: 12px; line-height: 1.45; }
+.summoner-spell[aria-pressed="true"] { border-color: var(--spell-color); background: #2e4135; }
+.summoner-spell:not(:disabled):hover { background: #364b3b; }
+.summoner-spell:disabled { cursor: default; opacity: .58; }
+
+.skill-keyboard-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1001;
+  display: grid;
+  place-items: center;
+  overflow: auto;
+  padding: 12px;
+  background: rgba(5, 12, 8, .82);
+  backdrop-filter: blur(4px);
+}
+
+.skill-keyboard-overlay[hidden] { display: none; }
+
+.skill-keyboard-panel {
+  width: min(100%, 820px);
+  margin: auto;
+  padding: clamp(10px, 2.8vw, 26px);
+  border: 1px solid rgba(219, 199, 153, .28);
+  border-radius: 12px;
+  background: #18231b;
+  color: #eee5cf;
+  box-shadow: 0 16px 48px rgba(0, 0, 0, .5);
+}
+
+.skill-keyboard-panel header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+
+.skill-keyboard-panel h2 { margin: 0; font-size: 20px; }
+.skill-keyboard-panel p { margin: 6px 0 0; font-size: 12px; color: #c4ccb9; }
+
+.skill-keyboard {
+  --key-width: clamp(21px, 7vw, 61px);
+  --key-gap: clamp(2px, .65vw, 6px);
+  display: grid;
+  gap: var(--key-gap);
+  overflow-x: auto;
+}
+
+.skill-key-row {
+  display: flex;
+  justify-content: center;
+  gap: var(--key-gap);
+  min-width: calc(11 * var(--key-width) + 10 * var(--key-gap));
+}
+
+.skill-key {
+  position: relative;
+  flex: 0 0 var(--key-width);
+  height: clamp(38px, 7vw, 57px);
+  padding: 4px;
+  border: 1px solid #4c604f;
+  border-bottom-width: 3px;
+  border-radius: 5px;
+  background: #28392c;
+}
+
+.skill-key[data-code="Space"] { flex-basis: calc(4 * var(--key-width)); }
+.skill-key kbd { display: block; font: 700 clamp(8px, 1.6vw, 13px) var(--font-mono); }
+.skill-key.is-fixed { background: #202820; color: #b4c3ab; }
+.skill-key.is-fixed span { display: block; margin-top: 4px; font-size: clamp(7px, 1.4vw, 11px); line-height: 1.15; }
+.skill-key:not(.is-fixed):hover { border-color: #cead6d; }
+
+.skill-key-icon {
+  position: absolute;
+  right: 3px;
+  bottom: 2px;
+  width: min(72%, 30px);
+  cursor: grab;
+}
+
+.skill-key-icon svg { display: block; width: 100%; height: auto; pointer-events: none; }
 
 .durability-bar {
   position: absolute;

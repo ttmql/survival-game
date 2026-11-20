@@ -231,7 +231,7 @@
     return tx + ":" + ty;
   }
 
-  function createWorld(rawSeed) {
+  function createWorld(rawSeed, layout = null) {
     const seed = rawSeed >>> 0;
     const thresholds = calibrate(seed);
     const cache = new Map();
@@ -254,6 +254,11 @@
         for (let lx = 0; lx < CHUNK_SIZE; lx += 1) {
           const x = originX + lx;
           const y = originY + ly;
+          const presetTerrain = layout?.terrainAt(x, y);
+          if (presetTerrain !== undefined) {
+            data[ly * CHUNK_SIZE + lx] = presetTerrain;
+            continue;
+          }
           const oceanValue = oceanValueAt(x, y, seed);
           const rockValue = rockValueAt(x, y, seed);
           data[ly * CHUNK_SIZE + lx] = classify(oceanValue, rockValue, thresholds);
@@ -318,9 +323,9 @@
     function featureAt(tx, ty) {
       const x = Math.floor(tx);
       const y = Math.floor(ty);
-      const terrain = terrainAt(x, y);
 
-      if (removedFeatures.has(tileKey(x, y))) return FEATURE.NONE;
+      if (removedFeatures.has(tileKey(x, y)) || layout?.contains(x, y)) return FEATURE.NONE;
+      const terrain = terrainAt(x, y);
       if (terrain === TERRAIN.OCEAN) return waterDepthAt(x, y) === 2 && hash2(x, y, seed ^ 0x6a71c932) < 0.08 ? FEATURE.SILICA : FEATURE.NONE;
 
       const field = terrain === TERRAIN.GRASS ? TREE_FIELD : COAL_FIELD;
@@ -428,6 +433,7 @@
      * frame. For most seeds this resolves within a few milliseconds.
      */
     function findSpawn() {
+      if (layout?.spawn) return { ...layout.spawn };
       let best = null;
 
       const evaluateCenter = (centerX, centerY) => {

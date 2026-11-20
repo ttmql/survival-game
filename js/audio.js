@@ -1281,6 +1281,29 @@
       this.actionTone(650, 0.23, "sine", 0.09, 65, 0.04);
     }
 
+    playSummonerSkill(id, phase) {
+      if (!this.ctx || this.muted) return;
+      const sweep = {
+        flash: [320, 1400, 0.14],
+        ignite: [145, 72, 0.23],
+        smite: [980, 95, 0.28],
+        heal: [430, 860, 0.34],
+        barrier: [650, 410, 0.36],
+        exhaust: [510, 160, 0.32],
+        cleanse: [660, 1320, 0.30],
+        teleport: {
+          cast: [180, 490, 0.45],
+          pulse: [280, 470, 0.25],
+          arrive: [500, 1160, 0.36],
+          interrupt: [450, 115, 0.24],
+        }[phase],
+      }[id];
+      if (!sweep) return;
+      const [from, to, duration] = sweep;
+      this.actionTone(from, duration, "triangle", 0.076, to);
+      this.actionTone(from * 1.5, duration * 0.78, "sine", 0.04, to * 1.5, 0.055);
+    }
+
     playGiftLand() {
       this.actionSounds.giftLand=(this.actionSounds.giftLand||0)+1;
       if (!this.ctx || this.muted) return;

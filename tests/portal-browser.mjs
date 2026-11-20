@@ -50,8 +50,8 @@ try {
     return centres;})()`);
   assert.deepEqual(previews,[[240,150],[440,150]],"Both source and target portals must have previews");
   await screenshot("browser-portal-preview");
-  await send("Input.dispatchKeyEvent",{type:"keyDown",code:"KeyR",key:"r"});
-  await send("Input.dispatchKeyEvent",{type:"keyUp",code:"KeyR",key:"r"});
+  await send("Input.dispatchKeyEvent",{type:"keyDown",code:"Digit1",key:"1"});
+  await send("Input.dispatchKeyEvent",{type:"keyUp",code:"Digit1",key:"1"});
   const activated=await evaluate(`(()=>{const g=wildsGame;g.paused=true;g.pointerInside=false;
     return {count:g.portalEffects.length,durability:g.inventory.equipment[0].durability,cooldown:g.holyGunRemaining(g.inventory.equipment[0])};})()`);
   assert.equal(activated.count,1);assert.equal(activated.durability,14);assert(activated.cooldown>7.5);
@@ -137,8 +137,8 @@ try {
   assert.deepEqual(late,{started:true,captured:true,before:15,positions:[215,225,5],released:true,fixedDuration:true,arrivalIgnored:true,remaining:0});
   await evaluate(`(()=>{const g=wildsGame;g.placedObjects.clear();g.placedObjectTiles.clear();g.invalidateRooms();g.mobs=[];
     g.getPointerWorldPosition=()=>({x:10,y:110});g.holyGunTime=200;g.pointerInside=true;g.paused=false;g.lastFrameTime=0;})()`);
-  await send("Input.dispatchKeyEvent",{type:"keyDown",code:"KeyR",key:"r"});
-  await send("Input.dispatchKeyEvent",{type:"keyUp",code:"KeyR",key:"r"});
+  await send("Input.dispatchKeyEvent",{type:"keyDown",code:"Digit1",key:"1"});
+  await send("Input.dispatchKeyEvent",{type:"keyUp",code:"Digit1",key:"1"});
   await send("Input.dispatchKeyEvent",{type:"keyDown",code:"KeyD",key:"d"});await delay(850);
   await send("Input.dispatchKeyEvent",{type:"keyUp",code:"KeyD",key:"d"});await delay(100);
   const escaped=await evaluate(`(()=>{const g=wildsGame,c=g.portalEffects[0];return {age:c.age,distance:Math.hypot(g.player.x-c.ends[0].x,g.player.y-c.ends[0].y),x:g.player.x,y:g.player.y};})()`);
@@ -148,7 +148,7 @@ try {
   assert.deepEqual(await evaluate("({x:wildsGame.player.x,y:wildsGame.player.y,frozen:wildsGame.player.portalFrozen})"),{x:escaped.x,y:escaped.y,frozen:false});
   // M-map targeting uses real mouse/key events, including drag-to-pan.
   const drag=await evaluate(`(()=>{const g=wildsGame;g.player.x=10;g.player.y=10;g.player.cameraOffset=null;g.lastPlayerSafe={x:10,y:10};
-    g.mobs=[];g.holyGunTime=1000;g.inventory.equipment[0]={itemId:"enderman_portal",count:1,durability:15};g.selectedSlot={area:"equipment",index:0};
+    g.mobs=[];g.holyGunTime=1000;g.inventory.equipment[0]={itemId:"enderman_portal",count:1,durability:15};g.selectedSlot={area:"equipment",index:1};
     g.explored.clear();g.explored.add(g.tileKey(60,0));g.explored.add(g.tileKey(61,0));g.paused=false;g.renderInventory();g.syncHeldStats();
     const r=g.worldMapCanvas.getBoundingClientRect();return r.width;})()`);
   await send("Input.dispatchKeyEvent",{type:"keyDown",code:"KeyM",key:"m"});
@@ -167,17 +167,17 @@ try {
       try{g.drawMapPortalPreview();}finally{ctx.stroke=stroke;}return {valid:g.portalPlan(g.mapPortalTarget.x,g.mapPortalTarget.y,true).valid,colours};})()`);
   }
   const unknown=await aimMap(59);assert(!unknown.valid);assert(unknown.colours.includes("#ff646f"));
-  await send("Input.dispatchKeyEvent",{type:"keyDown",code:"KeyR",key:"r"});await send("Input.dispatchKeyEvent",{type:"keyUp",code:"KeyR",key:"r"});
+  await send("Input.dispatchKeyEvent",{type:"keyDown",code:"Digit1",key:"1"});await send("Input.dispatchKeyEvent",{type:"keyUp",code:"Digit1",key:"1"});
   assert(await evaluate("wildsGame.mapOpen"));assert.equal(await evaluate("wildsGame.inventory.equipment[0].durability"),15);
   const distant=await aimMap(61);assert(!distant.valid);assert(distant.colours.includes("#ff646f"));
   const allowed=await aimMap(60);assert(allowed.valid);assert(allowed.colours.includes("#7df7a1"));
   await screenshot("browser-map-portal-preview");
-  await send("Input.dispatchKeyEvent",{type:"keyDown",code:"KeyR",key:"r"});await send("Input.dispatchKeyEvent",{type:"keyUp",code:"KeyR",key:"r"});
+  await send("Input.dispatchKeyEvent",{type:"keyDown",code:"Digit1",key:"1"});await send("Input.dispatchKeyEvent",{type:"keyUp",code:"Digit1",key:"1"});
   const mapCast=await evaluate(`(()=>{const g=wildsGame;g.paused=true;const cast=g.portalEffects[0];return {map:g.mapOpen,count:g.portalEffects.length,x:cast.ends[1].x,durability:g.inventory.equipment[0].durability};})()`);
   assert.deepEqual(mapCast,{map:false,count:1,x:1210,durability:14});
   const longCamera=await evaluate(`(()=>{const g=wildsGame;g.updatePortalEffects(2-g.portalEffects[0].age);const duration=g.player.cameraOffset.duration;
     g.updatePortalCamera(.5);return {duration,x:g.player.x,offset:g.player.cameraOffset,frozen:g.player.portalFrozen};})()`);
   assert.deepEqual(longCamera,{duration:.5,x:1210,offset:null,frozen:true});
   assert.deepEqual(errors,[]);
-  console.log("Portal browser checks passed, including M-map panning, explored/range checks, red/green previews, R casting and long-distance camera return.");
+  console.log("Portal browser checks passed, including M-map panning, explored/range checks, red/green previews, skill shortcuts and long-distance camera return.");
 } finally { ws.close(); }

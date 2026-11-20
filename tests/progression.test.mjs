@@ -4,7 +4,7 @@ import vm from "node:vm";
 import assert from "node:assert/strict";
 
 const context = vm.createContext({ console, performance, Math: Object.create(Math), document: { readyState: "loading", addEventListener() {} } });
-for (const file of ["config", "buildings", "time", "inventory", "player", "audio", "renderer", "game"]) {
+for (const file of ["config", "buildings", "time", "inventory", "player", "audio", "renderer", "summoner", "game"]) {
   let source = readFileSync(new URL(`../js/${file}.js`, import.meta.url), "utf8");
   if (file === "renderer") continue;
   if (file === "game") source = source.replace("  function boot() {", "  globalThis.TestGame = Game;\n  function boot() {");
@@ -23,7 +23,26 @@ function game() {
     showToast() {}, spawnDrop(...drop) { this.drops.push(drop); },
   });
   return g;
-}test('sleep advances tree, lit crops and drought but not unlit crops',()=>{
+}
+
+function braceletGame(spell = "flash") {
+  const g = game();
+  g.world = { terrainAt: () => W.TERRAIN.GRASS };
+  g.placedObjectTiles = new Map();
+  g.placedObjects = new Map();
+  g.player.isBlockedArea = () => false;
+  g.keys = new Set();
+  g.explored = new Set();
+  g.pointerInside = true;
+  g.getPointerWorldPosition = () => ({x: 210, y: 10});
+  g.canMonsterAggro = () => true;
+  g.inventory.addEquipment("summoner_bracelet");
+  g.updateSkillBindings();
+  g.summoner = new W.SummonerBracelet(g);
+  assert(g.summoner.select(spell));
+  return g;
+}
+test('sleep advances tree, lit crops and drought but not unlit crops',()=>{
  const g=game();g.clock=new W.GameClock();g.clock.time=22*3600;g.farmTrees=new Set();
  g.farm=new Map([
  ['0,0',{tx:0,ty:0,crop:'sapling',growth:1,soil:true,wet:true}],
@@ -129,19 +148,232 @@ test('holy gun drops with five uses and fires toward the mouse with its own cool
  const mob=g.spawnMob('dark_lucian',2,0);mob.deathSource='player';g.finishMobDeath(mob);
  assert(g.drops.some(d=>d[0]==='lucian_holy_gun'&&d[1]===1));assert.equal(W.ITEMS.lucian_holy_gun.maxDurability,5);
 });
-test('guns cool independently, preserve cooldown on moves and cannot be dropped while cooling',()=>{
+test('guns share cooldown, spend the leftmost durability and preserve the deadline when moved',()=>{
  const g=game();g.projectiles=[];g.pointerInside=true;g.getPointerWorldPosition=()=>({x:100,y:10});
  g.inventory.equipment[0]={itemId:'lucian_holy_gun',count:1,durability:5};
  g.inventory.equipment[1]={itemId:'lucian_holy_gun',count:1,durability:5};
- g.selectedSlot={area:'equipment',index:0};assert(g.startHolyGun());g.updateHolyGun(2);
- g.selectedSlot={area:'equipment',index:1};assert(g.startHolyGun());
- assert.equal(g.holyGunRemaining(g.inventory.equipment[0]),18);assert.equal(g.holyGunRemaining(g.inventory.equipment[1]),20);assert.equal(g.holyGunCasts.length,2);
+ g.selectedSlot={area:'equipment',index:1};assert(g.startHolyGun());g.updateHolyGun(2);
+ assert.equal(g.inventory.equipment[0].durability,4);assert.equal(g.inventory.equipment[1].durability,5);
+ assert(!g.startHolyGun());assert.equal(g.selectedSlot.index,1);
+ assert.equal(g.holyGunRemaining(g.inventory.equipment[0]),18);assert.equal(g.holyGunRemaining(g.inventory.equipment[1]),18);assert.equal(g.holyGunCasts.length,1);
  const gun=g.inventory.equipment[0];g.dropInventoryStack('equipment',0);assert.equal(g.inventory.equipment[0],gun);assert.equal(g.drops.length,0);
  g.inventory.swap({area:'equipment',index:0},{area:'backpack',index:0});g.inventory.sortBackpack();
  assert.equal(g.holyGunRemaining(g.inventory.backpack[0]),18);
  const chest=new Array(32).fill(null);assert(g.addToArray(chest,g.inventory.backpack[0]));assert.equal(g.holyGunRemaining(chest[0]),18);
  const inv=new W.Inventory();inv.addEquipment(chest[0].itemId,chest[0].durability,chest[0].skillReadyAt);assert.equal(g.holyGunRemaining(inv.equipment[0]),18);
+ g.inventory.setSlot('equipment',0,{itemId:'lucian_holy_gun',count:1,durability:5});
+ assert(!g.startHolyGun());assert.equal(g.inventory.equipment[0].durability,5);
  g.updateHolyGun(20.01);g.tileInFront=()=>({tx:1,ty:0});g.dropInventoryStack('equipment',1);assert.equal(g.inventory.equipment[1],null);assert.equal(g.drops.length,1);
+});
+test('creative gun casts bypass cooldown without changing the simulated survival deadline', () => {
+  const g = game();
+  g.sessionMode = 'creative';
+  g.gameMode = 'creative';
+  g.projectiles = [];
+  g.pointerInside = true;
+  g.getPointerWorldPosition = () => ({ x: 100, y: 10 });
+  const gun = { itemId: 'lucian_holy_gun', count: 1, durability: 5 };
+  g.inventory.setSlot('equipment', 0, gun);
+  assert(g.startHolyGun());
+  assert(g.startHolyGun());
+  assert.equal(gun.durability, 5);
+  assert.equal(g.holyGunRemaining(gun), 0);
+
+  g.gameMode = 'survival';
+  assert(g.startHolyGun());
+  assert(!g.startHolyGun());
+  assert.equal(gun.durability, 4);
+  assert.equal(g.holyGunRemaining(gun), 20);
+  g.gameMode = 'creative';
+  g.updateHolyGun(3);
+  assert(g.startHolyGun());
+  g.gameMode = 'survival';
+  assert.equal(g.holyGunRemaining(gun), 17);
+});
+test('skill bindings use the leftmost slot, fall back to the lowest free number and reserve F in creative sessions',()=>{
+  const g = game();
+  const gun = { itemId: 'lucian_holy_gun', count: 1, durability: 5 };
+  const portal = { itemId: 'enderman_portal', count: 1, durability: 15 };
+  g.inventory.setSlot('equipment', 2, { ...gun });
+  g.inventory.setSlot('equipment', 3, { ...portal });
+  g.inventory.setSlot('equipment', 5, { ...gun });
+  g.inventory.setSlot('backpack', 0, { ...portal });
+  g.updateSkillBindings();
+  assert.equal(g.skillBindingLabel(gun.itemId), '3');
+  assert.equal(g.skillBindingLabel(portal.itemId), '4');
+  assert.equal(g.skillBindings.size, 2);
+
+  g.skillKeyPreferences = new Map([[gun.itemId, 'Digit4']]);
+  g.updateSkillBindings();
+  assert.equal(g.skillBindingLabel(portal.itemId), '1');
+  g.skillKeyPreferences.set(gun.itemId, 'KeyF');
+  g.sessionMode = 'survival';
+  g.gameMode = 'survival';
+  g.updateSkillBindings();
+  assert.equal(g.skillBindingLabel(gun.itemId), 'F');
+  g.sessionMode = 'creative';
+  g.updateSkillBindings();
+  assert.equal(g.skillBindingLabel(gun.itemId), '3');
+  assert.equal(g.fixedKeyAction('KeyF'), '创造模式疾行');
+  g.gameMode = 'creative';
+  g.updateSkillBindings();
+  assert.equal(g.skillBindingLabel(gun.itemId), '3');
+  g.inventory.removeSlot('equipment', 3);
+  g.updateSkillBindings();
+  assert.equal(g.skillBindingLabel(portal.itemId), null);
+});
+test("bracelets default to Flash and share the selection and cooldown without a crafting recipe", () => {
+  const g = braceletGame();
+  assert.equal(W.ITEMS.summoner_bracelet.maxDurability, 25);
+  assert(!W.RECIPES.some(recipe => recipe.output === "summoner_bracelet"));
+  g.inventory.addEquipment("summoner_bracelet");
+  g.updateSkillBindings();
+  const [left, right] = g.inventory.equipment;
+  g.player.isBlockedArea = (l, t, r) => r > 30 && l < 50;
+  assert(g.summoner.start(g.summoner.equipped()));
+  assert.equal(g.player.x, 170);
+  assert.equal(g.player.cameraOffset, null);
+  assert.equal(g.lastPlayerSafe.x, 170);
+  assert.equal(left.durability, 24);
+  assert.equal(right.durability, 25);
+  assert.equal(g.holyGunRemaining(left), 60);
+  assert.equal(g.holyGunRemaining(right), 60);
+  assert(!g.summoner.select("heal"));
+  assert.equal(g.summoner.selection, "flash");
+});
+test("Teleport checks explored range and collisions, channels for five seconds and returns the camera", () => {
+  const g = braceletGame("teleport");
+  const gear = g.summoner.equipped();
+  g.mapOpen = true;
+  g.closeMap = () => { g.mapOpen = false; g.mapPortalTarget = null; };
+  g.mapPortalTarget = {x: 2410, y: 10};
+  assert(!g.summoner.teleportPreview(g.mapPortalTarget, true).valid);
+  assert(!g.summoner.start(gear, true));
+  assert.equal(gear.stack.durability, 25);
+  g.explored.add(g.tileKey(120, 0));
+  g.explored.add(g.tileKey(121, 0));
+  assert(!g.summoner.teleportPreview({x: 2430, y: 10}, true).valid);
+  g.player.isBlockedArea = l => l > 2000;
+  assert(!g.summoner.teleportPreview(g.mapPortalTarget, true).valid);
+  g.player.isBlockedArea = () => false;
+  assert(g.summoner.teleportPreview(g.mapPortalTarget, true).valid);
+  assert(g.summoner.start(gear, true));
+  assert(!g.mapOpen);
+  assert.equal(gear.stack.durability, 24);
+  assert(!g.summoner.select("flash"));
+  g.keys.add("KeyD");
+  assert.equal(g.readInput().x, 0);
+  g.summoner.update(4.9);
+  assert.equal(g.player.x, 10);
+  g.summoner.update(0.1);
+  assert.equal(g.player.x, 2410);
+  assert.equal(g.lastPlayerSafe.x, 2410);
+  assert.equal(g.holyGunRemaining(gear.stack), 120);
+  assert.equal(g.player.cameraOffset.duration, 1);
+  g.updatePortalCamera(1);
+  assert.equal(g.player.cameraOffset, null);
+});
+test("an attack interrupts Teleport after spending just one charge and sets a ten-second cooldown", () => {
+  const g = braceletGame("teleport"), gear = g.summoner.equipped();
+  g.selectedSlot = { area: "equipment", index: gear.index };
+  assert(g.summoner.worldPreview()?.valid);
+  g.inventory.setSlot("equipment", 1, { itemId: "wood_axe", count: 1 });
+  g.selectedSlot = { area: "equipment", index: 1 };
+  assert.equal(g.summoner.worldPreview(), null);
+  assert(g.summoner.start(gear));
+  g.summoner.update(2);
+  g.damagePlayer(5, {name: "僵尸"});
+  assert.equal(g.player.health, 95);
+  assert.equal(g.summoner.channel, null);
+  assert.equal(gear.stack.durability, 24);
+  assert.equal(g.holyGunRemaining(gear.stack), 10);
+  g.summoner.update(5);
+  assert.equal(g.player.x, 10);
+});
+test("Ignite ticks ten times, extinguishes on entering water and only hits once on a wet target", () => {
+  const g = braceletGame("ignite");
+  const pig = g.spawnMob("pig", 1, 0), farther = g.spawnMob("pig", 3, 0);
+  assert(g.summoner.start(g.summoner.equipped()));
+  g.summoner.update(4.9);
+  assert.equal(pig.health, 10);
+  assert.equal(farther.health, 100);
+  g.summoner.update(0.1);
+  assert.equal(pig.health, 0);
+  g.gameMode = "creative";
+  assert(g.summoner.start(g.summoner.equipped()));
+  g.summoner.update(0.5);
+  assert.equal(farther.health, 90);
+  g.world.terrainAt = tx => tx === 3 ? W.TERRAIN.OCEAN : W.TERRAIN.GRASS;
+  g.summoner.update(1);
+  assert.equal(farther.summonerIgnite, null);
+  assert.equal(farther.health, 90);
+  assert(g.summoner.start(g.summoner.equipped()));
+  g.summoner.update(5);
+  assert.equal(farther.health, 80);
+});
+test("Smite drops two copies only on a direct kill and Exhaust doubles damage for eight seconds", () => {
+  const g = braceletGame("smite");
+  g.gameMode = "creative";
+  const pig = g.spawnMob("pig", 1, 0);
+  assert(g.summoner.start(g.summoner.equipped()));
+  assert.equal(pig.health, 50);
+  g.damageMob(pig, 50);
+  g.finishMobDeath(pig);
+  assert.equal(g.drops.length, 1);
+  const next = g.spawnMob("pig", 5, 0);
+  assert(g.summoner.select("exhaust"));
+  assert(g.summoner.start(g.summoner.equipped()));
+  assert.equal(g.mobDamageMultiplier(next), 2);
+  g.damageMob(next, 10, "monster");
+  assert.equal(next.health, 80);
+  g.summoner.update(7.5);
+  assert.equal(g.mobDamageMultiplier(next), 2);
+  g.summoner.update(0.5);
+  assert.equal(g.mobDamageMultiplier(next), 1);
+  next.health = 50;
+  assert(g.summoner.select("smite"));
+  assert(g.summoner.start(g.summoner.equipped()));
+  g.finishMobDeath(next);
+  assert.equal(g.drops.length, 3);
+});
+test("Heal, Barrier, Ghost and Cleanse apply timed player effects", () => {
+  const g = braceletGame("heal");
+  g.player.health = 30;
+  assert(g.summoner.start(g.summoner.equipped()));
+  assert.equal(g.player.summonerSpeedFactor, 1.3);
+  for (const health of [50, 70, 90]) {
+    g.summoner.update(1);
+    assert.equal(g.player.health, health);
+  }
+  assert.equal(g.player.summonerSpeedFactor, 1);
+
+  const shield = braceletGame("barrier");
+  assert(shield.summoner.start(shield.summoner.equipped()));
+  shield.player.takeDamage(25, {type: "drowning"});
+  shield.damagePlayer(25, {name: "僵尸"});
+  assert.equal(shield.player.health, 100);
+  shield.summoner.update(3);
+  shield.player.takeDamage(25);
+  assert.equal(shield.player.health, 75);
+
+  const runner = braceletGame("ghost");
+  assert(runner.summoner.start(runner.summoner.equipped()));
+  assert.equal(runner.player.summonerSpeedFactor, 2);
+  assert.equal(runner.holyGunRemaining(runner.summoner.equipped().stack), 35);
+  runner.summoner.update(7.5);
+  assert.equal(runner.player.summonerSpeedFactor, 2);
+  runner.summoner.update(0.5);
+  assert.equal(runner.player.summonerSpeedFactor, 1);
+
+  const cleansed = braceletGame("cleanse");
+  cleansed.player.applyPoison(30, 3);
+  cleansed.player.applySlow(2, 0.5);
+  cleansed.player.manureDietHours = 8;
+  assert(cleansed.summoner.start(cleansed.summoner.equipped()));
+  assert.equal(cleansed.player.poisonDamageRemaining, 0);
+  assert.equal(cleansed.player.slowRemainingHours, 0);
+  assert.equal(cleansed.player.manureDietHours, 0);
+  assert.equal(cleansed.player.speedFactor, 1);
 });
 test('first-night Lucian spawns once outside view in darkness and approaches before attacking',()=>{
  const g=game();g.clock=new W.GameClock();g.clock.time=21*3600;g.firstNightLucianHour=20.5;

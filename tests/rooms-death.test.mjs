@@ -15,6 +15,7 @@ function game() {
   Object.assign(g, {
     world: { featureAt: () => W.FEATURE.NONE, terrainAt: () => W.TERRAIN.GRASS, findSpawn: () => ({ tx: 0, ty: 0 }), isDug: () => false },
     inventory: new W.Inventory(), placedObjects: new Map(), placedObjectTiles: new Map(), placedObjectSequence: 0,
+    activeRespawnSteles: new Set(),
     mobs: [], mobSequence: 0, projectiles: [], drops: [], selectedSlot: null, respawn: null, clock: new W.GameClock(),
     renderInventory() {}, syncHeldStats() {}, hideItemDetails() {}, showToast() {}, drawMinimap() {},
     spawnDrop(...args) { this.drops.push(args); }, updateSpawner() {},
@@ -115,6 +116,25 @@ test("drowning and starvation keep distinct lethal causes", () => {
   g.player.health = 1; g.player.oxygen = 0; g.player.updateVitals(1);
   assert.equal(g.deathReasonText(), "你淹死了");
   g.player.takeDamage(100, { type: "monster", name: "后续伤害" }); assert.equal(g.deathReasonText(), "你淹死了");
+});
+test("all activated steles qualify and the nearest depends on the death position", () => {
+  const g = game();
+  add(g, "respawn_stele", -3, 0);
+  add(g, "respawn_stele", 5, 0);
+  add(g, "respawn_stele", 0, 1);
+  const west = g.placedObjectAt(-3, 0);
+  const east = g.placedObjectAt(5, 0);
+  assert.equal(g.nearestRespawnStele(10, 10), null);
+  g.activateRespawnStele(west);
+  g.activateRespawnStele(east);
+  g.activateRespawnStele(east);
+  assert.equal(g.activeRespawnSteles.size, 2);
+  assert.equal(g.nearestRespawnStele(10, 10), west);
+  assert.equal(g.nearestRespawnStele(90, 10), east);
+  g.finishObjectMining({ tx: -3, ty: 0 });
+  assert.equal(g.nearestRespawnStele(10, 10), east);
+  g.finishObjectMining({ tx: 5, ty: 0 });
+  assert.equal(g.nearestRespawnStele(10, 10), null);
 });
 test("new monster names and arrows retain automatic lethal attribution after the source disappears", () => {
   const g = game(); g.player.health = 1;

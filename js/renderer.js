@@ -105,7 +105,7 @@
       this.world = world;
     }
 
-    render(player, time, lighting, drops, target, placedObjects, mobs, projectiles, roomIndex = null, giftEffects = [], farm = new Map(), waterEffects = [], portalEffects = []) {
+    render(player, time, lighting, drops, target, placedObjects, mobs, projectiles, roomIndex = null, giftEffects = [], farm = new Map(), waterEffects = [], portalEffects = [], summoner = null, summonerTarget = null) {
       if (!this.world) return;
 
       const ctx = this.ctx;
@@ -278,6 +278,7 @@
         this.drawDrops(drops, camX, camY, displayTime);
       }
 
+      if (summoner) this.drawSummonerEffects(summoner, player, mobs || [], camX, camY);
       // Roofs cover the scene last, including torches, creatures and drops.
       this.drawRoofs(placedObjects || [], camX, camY);
       this.drawWaterEffects(waterEffects,camX,camY);
@@ -293,7 +294,133 @@
         else if (target.kind === "placement") this.drawPlacementPreview(target, camX, camY, displayTime);
         else this.drawMiningTarget(target, camX, camY);
       }
+      if (summonerTarget) {
+        this.drawSummonerTarget(ctx, summonerTarget.x - camX, summonerTarget.y - camY, summonerTarget.valid, TILE / 2);
+      }
       this.drawHDProjectiles(projectiles||[],camX,camY,lighting,this.outdoorSources,roomIndex,displayTime);
+    }
+
+    drawSummonerTarget(ctx, x, y, valid, radius) {
+      ctx.save();
+      ctx.translate(Math.round(x), Math.round(y));
+      ctx.fillStyle = valid ? "rgba(52,244,151,.21)" : "rgba(255,69,93,.22)";
+      ctx.strokeStyle = valid ? "#7df7a1" : "#ff646f";
+      ctx.lineWidth = radius > 8 ? 1.5 : 2;
+      ctx.beginPath();
+      ctx.arc(0, 0, radius, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+      for (let side = 0; side < 4; side++) {
+        ctx.beginPath();
+        ctx.moveTo(radius - 3, 0);
+        ctx.lineTo(radius + 3, 0);
+        ctx.stroke();
+        ctx.rotate(Math.PI / 2);
+      }
+      ctx.restore();
+    }
+
+    drawSummonerEffects(state, player, mobs, camX, camY) {
+      const ctx = this.ctx;
+      const time = state.time;
+      const circle = (x, y, radius, color, alpha) => {
+        ctx.globalAlpha = alpha;
+        ctx.strokeStyle = color;
+        ctx.beginPath();
+        ctx.arc(x, y, radius, 0, Math.PI * 2);
+        ctx.stroke();
+      };
+      ctx.save();
+      ctx.lineWidth = 1.5;
+      const x = Math.round(player.x - camX), y = Math.round(player.y - camY);
+
+      if (state.channel) {
+        const { channel } = state;
+        const progress = (time - channel.start) / (channel.until - channel.start);
+        circle(x, y, 15, "#a5e9ff", 0.7);
+        ctx.globalAlpha = 0.75;
+        ctx.strokeStyle = "#63bcff";
+        ctx.beginPath();
+        ctx.arc(x, y, 20, time * 2, time * 2 + Math.PI * 1.6);
+        ctx.stroke();
+        ctx.fillStyle = "#163346";
+        ctx.fillRect(x - 14, y - 32, 28, 4);
+        ctx.fillStyle = "#8ce0ff";
+        ctx.fillRect(x - 14, y - 32, 28 * progress, 4);
+        ctx.globalAlpha = 0.28 + progress * 0.3;
+        ctx.fillRect(x - 4, y - 64, 8, 59);
+      }
+      if (state.barrierUntil > time) {
+        ctx.globalAlpha = 0.27;
+        ctx.fillStyle = "#ffe596";
+        ctx.beginPath();
+        ctx.arc(x, y - 9, 17, 0, Math.PI * 2);
+        ctx.fill();
+        circle(x, y - 9, 17, "#fff5ab", 0.82);
+        circle(x, y - 9, 19 + Math.sin(time * 9), "#ffcf60", 0.48);
+      }
+      if (state.heal) {
+        circle(x, y + 2, 11, "#80f9a0", 0.78);
+        ctx.fillStyle = "#a2ffbc";
+        for (let i = 0; i < 3; i++) {
+          const rise = ((time * 21 + i * 7) % 21);
+          const px = x - 11 + i * 11, py = y - 8 - rise;
+          ctx.fillRect(px - 3, py, 7, 1);
+          ctx.fillRect(px, py - 3, 1, 7);
+        }
+      }
+      if (state.ghostUntil > time) {
+        for (let i = 0; i < 3; i++) {
+          circle(x, y + 2, 9 + ((time * 25 + i * 5) % 17), "#9fceff", 0.55 - i * 0.13);
+        }
+      }
+
+      for (const mob of mobs) {
+        if (mob.dying || mob.portalFrozen || (!mob.summonerIgnite && !(mob.summonerWeakUntil > time))) continue;
+        const mx = Math.round(mob.x - camX), my = Math.round(mob.y - camY);
+        if (mx < -25 || my < -25 || mx > VIEW_W + 25 || my > VIEW_H + 25) continue;
+        if (mob.summonerWeakUntil > time) {
+          circle(mx, my + 1, 13, "#b88ef8", 0.82);
+          circle(mx, my - 10 + Math.sin(time * 8) * 3, 5, "#d9b7ff", 0.58);
+        }
+        if (mob.summonerIgnite) {
+          for (let i = 0; i < 4; i++) {
+            const rise = (time * 29 + i * 5) % 20;
+            const px = mx - 9 + i * 5, py = my - rise;
+            ctx.globalAlpha = 1 - rise / 24;
+            ctx.fillStyle = i % 2 ? "#ffb14c" : "#ff5938";
+            ctx.fillRect(px, py, 3, 6);
+            ctx.fillStyle = "#ffe493";
+            ctx.fillRect(px + 1, py + 2, 1, 3);
+          }
+        }
+      }
+
+      for (const effect of state.bursts) {
+        const px = effect.x - camX, py = effect.y - camY;
+        if (px < -35 || py < -35 || px > VIEW_W + 35 || py > VIEW_H + 35) continue;
+        const progress = (time - effect.start) / (effect.until - effect.start);
+        const color = Wilds.SUMMONER_SPELLS[effect.id].color;
+        circle(px, py, 5 + progress * 23, color, 1 - progress);
+        if (effect.id === "smite" || effect.id === "teleport") {
+          ctx.globalAlpha = 0.85 * (1 - progress);
+          ctx.strokeStyle = color;
+          ctx.lineWidth = effect.id === "smite" ? 4 : 3;
+          ctx.beginPath();
+          ctx.moveTo(px - 6, py - 67);
+          ctx.lineTo(px + 3, py - 36);
+          ctx.lineTo(px - 5, py - 22);
+          ctx.lineTo(px, py);
+          ctx.stroke();
+        } else {
+          ctx.fillStyle = color;
+          for (let i = 0; i < 8; i++) {
+            const angle = i * Math.PI / 4;
+            ctx.fillRect(px + Math.cos(angle) * (7 + progress * 22), py + Math.sin(angle) * (7 + progress * 22), 2, 2);
+          }
+        }
+      }
+      ctx.restore();
     }
 
     // -------------------------------------------------------------------

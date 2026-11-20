@@ -17,31 +17,115 @@ async function click(selector){
 }
 async function key(code,key){await send('Input.dispatchKeyEvent',{type:'keyDown',code,key});await send('Input.dispatchKeyEvent',{type:'keyUp',code,key});}
 async function shot(name){const r=await send('Page.captureScreenshot',{format:'png'});await writeFile(new URL(`../screenshots/browser-${name}.png`,import.meta.url),Buffer.from(r.data,'base64'));}
+async function assertLivePanel(panel) {
+ const before = await evaluate('({time:wildsGame.clock.time, cooldownClock:wildsGame.holyGunTime, audio:wildsGame.audioUpdates})');
+ await evaluate('new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))');
+ const after = await evaluate('({panel:wildsGame.activeGamePanel(), paused:wildsGame.paused, time:wildsGame.clock.time, cooldownClock:wildsGame.holyGunTime, audio:wildsGame.audioUpdates, audioState:wildsGame.audio.ctx?.state})');
+ assert.equal(after.panel, panel);
+ assert.equal(after.paused, false);
+ assert.equal(after.audioState, 'running');
+ assert(after.time > before.time && after.cooldownClock > before.cooldownClock && after.audio > before.audio, `${panel} must keep simulation and audio running`);
+}
 try{
- await send('Page.enable');await send('Runtime.enable');await send('Page.navigate',{url});
+ const pageUrl = new URL(url);
+ pageUrl.searchParams.delete('mute');
+ await send('Page.enable');await send('Runtime.enable');await send('Page.navigate',{url:pageUrl.href});
  for(let i=0;i<100;i++){if(await evaluate('!!globalThis.wildsGame'))break;await delay(100);}
  await shot('mode-start');await click('input[name="gameMode"][value="creative"]');
  await evaluate('document.getElementById("seedInput").value="123456"');await click('#startGameBtn');
  const initial=await evaluate(`(()=>{const g=wildsGame;g.updateSpawner=()=>{};g.spawnFirstNightLucian=()=>false;return{creative:g.isCreative(),seed:g.seedText,empty:g.inventory.equipment.every(s=>s===null),backpack:g.inventory.backpack.every(s=>s===null),fixtures:g.placedObjects.size,debug:!!g.world.isDebugMap,vitals:document.getElementById('vitalsPanel').hidden};})()`);
  assert.deepEqual(initial,{creative:true,seed:'123456',empty:true,backpack:true,fixtures:0,debug:false,vitals:true});
+ await evaluate(`(() => {
+  const g = wildsGame, update = g.audio.update;
+  g.audioUpdates = 0;
+  g.audio.update = state => { g.audioUpdates++; update.call(g.audio, state); };
+ })()`);
  await evaluate(`(()=>{const g=wildsGame;g.world.terrainAt=()=>Wilds.TERRAIN.GRASS;g.world.featureAt=()=>Wilds.FEATURE.NONE;g.world.waterDepthAt=()=>0;g.player.x=10;g.player.y=10;g.lastPlayerSafe={x:10,y:10};})()`);
  await click('#bagButton');assert.equal(await evaluate('document.getElementById("backpackTitle").textContent'),'全部物品');
+ await assertLivePanel('backpack');
  assert(await evaluate('document.getElementById("backpackGrid").hidden'));
  await click('#creativeItemGrid [data-item="wood_axe"]');await click('#hotbar [data-index="3"]');
  assert.equal(await evaluate('wildsGame.inventory.equipment[3].count'),1);
  assert((await evaluate("document.querySelectorAll('#hotbar .inv-slot')[3].textContent")).includes('∞'));
  await click('#creativeCategories [data-category="materials"]');await click('#creativeItemGrid [data-item="wood"]');await click('#hotbar [data-index="4"]');
  assert.equal(await evaluate('wildsGame.inventory.equipment[4].count'),64);await shot('creative-catalogue');
- await click('#closeBackpack');await key('KeyF','f');assert(await evaluate('wildsGame.player.fastTravel'));
+ await click('#creativeCategories [data-category="equipment"]');
+ await click('#creativeItemGrid [data-item="summoner_bracelet"]');
+ await click('#hotbar [data-index="5"]');await click('#hotbar [data-index="6"]');
+ await key('Escape','Escape');assert(await evaluate('!wildsGame.backpackOpen && wildsGame.backpackOverlay.hidden'));
+ await click('#hotbar [data-index="5"]');
+ await assertLivePanel('summoner');
+ assert.equal(await evaluate("document.querySelectorAll('#summonerSpells button').length"), 9);
+ assert.equal(await evaluate("document.querySelector('[data-spell=flash]').getAttribute('aria-pressed')"), 'true');
+ await click('[data-spell=teleport]');
+ assert.deepEqual(await evaluate("[...document.querySelectorAll('#hotbar .skill-name')].map(label => label.textContent)"), ['传送', '传送']);
+ await shot('summoner-bracelet');
+ await key('Escape', 'Escape');
+ await click('#hotbar [data-index="3"]');
+ assert.equal(await evaluate('wildsGame.getHeldEquipment().item.id'), 'wood_axe');
+ await key('KeyM', 'm');
+ const teleportAim = await evaluate(`(() => {
+  const g = wildsGame, rect = g.worldMapCanvas.getBoundingClientRect();
+  return {x:rect.left + (g.player.tileX + 3.5 - g.mapCamX) * 8 * rect.width / g.worldMapCanvas.width,
+    y:rect.top + (g.player.tileY + .5 - g.mapCamY) * 8 * rect.height / g.worldMapCanvas.height};
+ })()`);
+ await send('Input.dispatchMouseEvent', {type:'mouseMoved', ...teleportAim});
+ assert(await evaluate('wildsGame.summoner.teleportPreview(wildsGame.mapPortalTarget, true)?.valid'));
+ assert.match(await evaluate('wildsGame.mapActionHint.textContent'), /6 手环传送 120格/);
+ await key('Digit6', '6');
+ assert(await evaluate('wildsGame.summoner.channel && !wildsGame.mapOpen'));
+ await evaluate('wildsGame.summoner.update(5)');
+ assert.equal(await evaluate('wildsGame.player.tileX'), 3);
+ assert.equal(await evaluate('wildsGame.inventory.equipment[5].durability'), 25);
+ await click('#hotbar [data-index="6"]');await click('[data-spell=ghost]');await key('Escape', 'Escape');
+ await key('KeyF','f');assert(await evaluate('wildsGame.player.fastTravel'));
  await send('Input.dispatchKeyEvent',{type:'keyDown',code:'KeyD',key:'d'});await delay(180);
  const speed=await evaluate('wildsGame.player.speed');assert.equal(speed,await evaluate('Wilds.CONFIG.PLAYER_SPEED*5'));
  await send('Input.dispatchKeyEvent',{type:'keyUp',code:'KeyD',key:'d'});await key('KeyF','f');assert(!await evaluate('wildsGame.player.fastTravel'));
  await click('#switchGameMode');
  assert.deepEqual(await evaluate('({mode:wildsGame.gameMode,creative:wildsGame.player.creative,vitals:document.getElementById("vitalsPanel").hidden})'),{mode:'survival',creative:false,vitals:false});
+ await key('Digit6', '6');
+ await click('#hotbar [data-index="6"]');
+ assert(await evaluate('wildsGame.summonerOpen && [...wildsGame.summonerSpells.children].every(button => button.disabled)'));
+ assert.deepEqual(await evaluate('[wildsGame.inventory.equipment[5].durability, wildsGame.inventory.equipment[6].durability]'), [24, 25]);
+ assert.equal(await evaluate('wildsGame.summoner.selection'), 'ghost');
+ await key('Escape', 'Escape');
+ for (const [open, panel] of [
+  ['openBackpack()', 'backpack'], ['openWorkbench()', 'workbench'],
+  ['openStorage({storage:new Array(32).fill(null)})', 'storage'], ['openFurnace({fuel:0})', 'furnace'], ['openStele()', 'stele'],
+ ]) {
+  await evaluate(`wildsGame.${open}`);
+  await assertLivePanel(panel);
+  await key('Escape', 'Escape');
+  assert(await evaluate(`!wildsGame.${panel}Open && wildsGame.${panel}Overlay.hidden`));
+ }
+ await evaluate('wildsGame.worldBeforeN = wildsGame.world; true');
+ await key('KeyN', 'n');
+ assert(await evaluate('wildsGame.world === wildsGame.worldBeforeN'));
+ await key('KeyM', 'm');
+ await assertLivePanel('map');
+ const xOnMap = await evaluate('wildsGame.player.x');
+ await send('Input.dispatchKeyEvent',{type:'keyDown',code:'KeyD',key:'d'});
+ await assertLivePanel('map');
+ await send('Input.dispatchKeyEvent',{type:'keyUp',code:'KeyD',key:'d'});
+ assert.equal(await evaluate('wildsGame.player.x'), xOnMap);
+ await key('Tab', 'Tab');
+ await assertLivePanel('skillKeyboard');
+ assert.equal(await evaluate("document.querySelector('#skillKeyboard [data-code=Escape] span').textContent"), '退出');
+ assert.equal(await evaluate("document.querySelector('#skillKeyboard [data-code=Tab] span').textContent"), '按键切换');
+ assert(await evaluate("!document.querySelector('#skillKeyboard [data-code=KeyN]').classList.contains('is-fixed')"));
+ assert(await evaluate("document.querySelector('#skillKeyboard [data-code=KeyF]').classList.contains('is-fixed')"));
+ await key('Escape', 'Escape');
+ assert(await evaluate('wildsGame.skillKeyboard.hidden && !wildsGame.paused'));
+ await assertLivePanel('map');
+ await key('KeyM', 'm');
+ assert(await evaluate('!wildsGame.mapOpen && wildsGame.mapOverlay.hidden'));
  await evaluate('wildsGame.inventory.setSlot("backpack",0,{itemId:"rock",count:7});wildsGame.player.takeDamage(10)');assert.equal(await evaluate('wildsGame.player.health'),90);
  await click('#switchGameMode');assert.equal(await evaluate('wildsGame.inventory.backpack[0].count'),7);assert.equal(await evaluate('wildsGame.player.health'),100);
  await click('#switchGameMode');assert.equal(await evaluate('wildsGame.inventory.backpack[0].count'),7);
- await evaluate('wildsGame.player.takeDamage(100);wildsGame.die()');assert(await evaluate('wildsGame.isDead'));
+ await key('KeyM', 'm');
+ await evaluate('wildsGame.player.takeDamage(100);wildsGame.die()');
+ assert(await evaluate('wildsGame.isDead && wildsGame.mapOverlay.hidden && !wildsGame.activeGamePanel()'));
  await click('#returnCreativeAfterDeath');assert(await evaluate('!wildsGame.isDead && wildsGame.isCreative()'));await shot('creative-game');
  const melee=await evaluate(`(()=>{const g=wildsGame;g.clock.setTimeOfDay(22);g.player.x=10;g.player.y=10;g.lastPlayerSafe={x:10,y:10};g.mobs=[];
    g.inventory.equipment.fill(null);g.selectedSlot={area:'equipment',index:0};g.syncHeldStats();g.renderInventory();g.nextAttackAt=0;
@@ -62,7 +146,8 @@ try{
  assert.equal(await evaluate('document.querySelector("#backpackGrid .inv-slot").dataset.item'),'rock');
  assert(!await evaluate('document.getElementById("backpackGrid").hidden'));
  await click('#closeBackpack');await click('#switchGameMode');assert.equal(await evaluate('wildsGame.inventory.backpack[0].count'),3);
- await click('#exitGame');assert(await evaluate('!document.getElementById("exitConfirmOverlay").hidden && wildsGame.paused'));
+ await click('#exitGame');
+ await assertLivePanel('exitConfirmation');
  await shot('exit-confirm');await click('#cancelExitGame');assert(await evaluate('wildsGame.started && !wildsGame.paused'));
  await click('#exitGame');await click('#confirmExitGame');
  assert.deepEqual(await evaluate('({started:wildsGame.started,world:wildsGame.world,player:wildsGame.player,objects:wildsGame.placedObjects.size,equipment:wildsGame.inventory.equipment.some(Boolean),backpack:wildsGame.inventory.backpack.some(Boolean),start:document.getElementById("startScreen").hidden})'),{started:false,world:null,player:null,objects:0,equipment:false,backpack:false,start:false});

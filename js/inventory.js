@@ -355,8 +355,13 @@
     }),
     enderman_portal: Object.freeze({
       id: "enderman_portal", name: "末影人的传送法阵", kind: "equipment", maxStack: 1, maxDurability: 15, skill: "portal",
-      description: "末影人的传送法阵，按R释放技能，cd8秒，可以在你原地和指定位置生成两个虫洞，交换虫洞之间的移动单位",
+      description: "末影人的传送法阵，按对应键释放技能，按 Tab 更改键位。可以在你原地和指定位置生成两个虫洞，交换虫洞之间的移动单位。生存模式冷却8秒",
       icon: '<svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="7" fill="#020719" stroke="#0f2b76" stroke-width="2"/><path fill="none" stroke="#1b419a" stroke-width="1.5" d="M8 1a7 7 0 0 1 7 7"/></svg>',
+    }),
+    summoner_bracelet: Object.freeze({
+      id: "summoner_bracelet", name: "召唤师手环", kind: "equipment", maxStack: 1, maxDurability: 25, skill: "summoner",
+      description: "召唤师手环，你可以选择英雄联盟的一个召唤师技能使用，按tab键更改其键位",
+      icon: '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3 3 8 1 13 3 15 8 13 13 8 15 3 13 1 8Z" fill="#816037" stroke="#3a2920"/><path d="M5 5 8 4 11 5 12 8 11 11 8 12 5 11 4 8Z" fill="#162a2d" stroke="#f0c972"/><path d="m8 2 3 2-3 4-3-4z" fill="#76e2d8" stroke="#345e60"/><path d="M3 11h2m6 0h2" stroke="#d7a756"/></svg>',
     }),
     workbench: Object.freeze({
       id: "workbench",
@@ -376,7 +381,7 @@
     raw_rice: Object.freeze({id:"raw_rice",name:"生米饭",kind:"material",maxStack:MATERIAL_MAX_STACK,description:"在熔炼炉烧制可获得熟米饭",icon:'<svg viewBox="0 0 16 16" aria-hidden="true"><path fill="#986239" stroke="#573922" d="M1 7h14l-2 6H3Z"/><ellipse cx="8" cy="7" rx="7" ry="3" fill="#c89a65"/><ellipse cx="8" cy="7" rx="5" ry="2" fill="#a78e62"/><path stroke="#e9d7a6" stroke-width="1.2" d="m4 7 2-1m1 2 1-2m2 1 2 1m-2-3 2 1"/></svg>',}),
     bread: Object.freeze({id:"bread",name:"面包",kind:"material",maxStack:MATERIAL_MAX_STACK,description:"味道看起来不错的干粮",icon:'<svg viewBox="0 0 16 16" aria-hidden="true"><path fill="#ae652d" stroke="#714025" d="M1 10Q0 4 6 3q6-3 9 3v6Q8 16 1 13Z"/><path fill="#d89b4c" d="M2 10Q1 5 7 4q5-2 7 3v3Q8 13 2 12Z"/><path stroke="#f5d28a" stroke-width="1.5" d="m5 5-2 3m6-4L6 8m6-3-2 3"/></svg>',edible:Object.freeze({satiety:50})}),
     cooked_rice: Object.freeze({id:"cooked_rice",name:"熟米饭",kind:"material",maxStack:MATERIAL_MAX_STACK,description:"好香啊这米饭，迫不及待想吃了啊啊啊啊啊啊啊啊啊啊啊啊啊啊啊啊啊啊啊啊啊啊啊",icon:'<svg viewBox="0 0 16 16" aria-hidden="true"><path fill="#986239" stroke="#573922" d="M1 8h14l-2 5H3Z"/><ellipse cx="8" cy="8" rx="7" ry="2.5" fill="#c89a65"/><path fill="#fff4db" stroke="#d9d5bd" stroke-width=".5" d="M2 8Q2 5 5 5Q5 2 8 4Q11 2 12 5Q15 5 14 8Z"/><path stroke="#d6d9ce" d="m5 6 1 1m2-2 1 1m2 0 1 1"/><path fill="none" stroke="#d9e5da" stroke-width=".6" d="M5 3Q3 2 5 0m5 3q-2-1 0-3"/></svg>',edible:Object.freeze({satiety:70,returnItem:"wood_bowl"})}),
-    lucian_holy_gun:Object.freeze({id:"lucian_holy_gun",name:"卢锡安的圣枪",kind:"equipment",maxStack:1,maxDurability:5,skill:"culling",description:"卢锡安的圣枪，超级强大的武器，按R启动，7秒内发射200颗子弹，每颗子弹伤害10，冷却20秒",icon:'<svg viewBox="0 0 16 16"><path fill="#243448" stroke="#101d2b" d="M2 2h12v4H9v8H5V6H2z"/><path fill="#c4d5df" d="M2 2h12v2H2zm4 5h2v6H6z"/><path fill="#58cfff" d="M11 3h4v2h-4z"/><path fill="#7795ad" d="M3 5h7v2H3z"/></svg>'}),
+    lucian_holy_gun:Object.freeze({id:"lucian_holy_gun",name:"卢锡安的圣枪",kind:"equipment",maxStack:1,maxDurability:5,skill:"culling",description:"卢锡安的圣枪，超级强大的武器，按对应键释放技能，按 Tab 更改键位。7秒内发射200颗子弹，每颗子弹伤害10，生存模式冷却20秒",icon:'<svg viewBox="0 0 16 16"><path fill="#243448" stroke="#101d2b" d="M2 2h12v4H9v8H5V6H2z"/><path fill="#c4d5df" d="M2 2h12v2H2zm4 5h2v6H6z"/><path fill="#58cfff" d="M11 3h4v2h-4z"/><path fill="#7795ad" d="M3 5h7v2H3z"/></svg>'}),
     wood_hoe:Object.freeze({id:"wood_hoe",name:"木锄头",kind:"equipment",maxStack:1,maxDurability:30,toolType:"hoe",speedMultiplier:1,attackBonus:0,description:"农具，点击草地，可以将其开垦化，以种植作物",icon:makeToolIcon("hoe","wood")}),
     stone_hoe:Object.freeze({id:"stone_hoe",name:"石锄头",kind:"equipment",maxStack:1,maxDurability:60,toolType:"hoe",speedMultiplier:1,attackBonus:0,description:"结实一点的农具，点击草地，可以将其开垦化，以种植作物",icon:makeToolIcon("hoe","stone")}),
     wood_axe: Object.freeze({

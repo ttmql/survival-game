@@ -24,7 +24,11 @@ async function evaluate(expression) {
 }
 async function screenshot(name) {
   const result = await send("Page.captureScreenshot", { format: "png" });
-  await writeFile(new URL(`../screenshots/${name}.png`, import.meta.url), Buffer.from(result.data, "base64"));
+  await writeFile(new URL(`../screenshots/browser-${name}.png`, import.meta.url), Buffer.from(result.data, "base64"));
+}
+async function press(code, key) {
+  await send('Input.dispatchKeyEvent',{type:'keyDown',code,key});
+  await send('Input.dispatchKeyEvent',{type:'keyUp',code,key});
 }
 try {
  await send('Page.enable');await send('Runtime.enable');await send('Page.navigate',{url});
@@ -36,10 +40,45 @@ try {
  await delay(700);await screenshot('dark-lucian-culling');
  assert.equal(await evaluate("wildsGame.mobs.some(m=>m.type==='dark_lucian'&&m.maxHealth===100)"),true);
  assert.equal(await evaluate("wildsGame.projectiles.some(p=>p.type==='culling_bullet'&&p.skill==='culling'&&p.damage===10)"),true);
- await evaluate(`(()=>{const g=wildsGame;g.mobs=[];g.projectiles=[];g.inventory.equipment[0]={itemId:'lucian_holy_gun',count:1,durability:5};g.selectedSlot={area:'equipment',index:0};const r=g.canvas.getBoundingClientRect();g.pointerInside=true;g.pointerClientX=r.left+r.width*.75;g.pointerClientY=r.top+r.height*.5;g.renderInventory();return true;})()`);
- await send('Input.dispatchKeyEvent',{type:'keyDown',code:'KeyR',key:'r'});await send('Input.dispatchKeyEvent',{type:'keyUp',code:'KeyR',key:'r'});
+ await evaluate(`(()=>{
+   const g=wildsGame;g.mobs=[];g.projectiles=[];
+   g.inventory.equipment[0]={itemId:'lucian_holy_gun',count:1,durability:5};
+   g.inventory.equipment[3]={itemId:'lucian_holy_gun',count:1,durability:5};
+   g.inventory.backpack[0]={itemId:'enderman_portal',count:1,durability:15};
+   g.selectedSlot={area:'equipment',index:3};
+   g.renderInventory();
+ })()`);
+ const hotkeys = () => evaluate(`[...document.querySelectorAll('#hotbar .skill-binding')].map(key => key.textContent)`);
+ assert.deepEqual(await hotkeys(), ['1', '1']);
+ await press('Tab', 'Tab');
+ assert(await evaluate("!wildsGame.skillKeyboard.hidden && !wildsGame.paused"));
+ assert.equal(await evaluate("document.querySelectorAll('#skillKeyboard .skill-key-icon').length"),1);
+ assert.match(await evaluate("document.querySelector('#skillKeyboard [data-code=KeyW]').textContent"),/向上/);
+ const drag = (from, to) => evaluate(`(() => {
+   const icon = document.querySelector('#skillKeyboard [data-code="${from}"] .skill-key-icon');
+   const key = document.querySelector('#skillKeyboard [data-code="${to}"]');
+   const dataTransfer = new DataTransfer();
+   icon.dispatchEvent(new DragEvent('dragstart', {dataTransfer, bubbles:true}));
+   if (!key.dispatchEvent(new DragEvent('dragover', {dataTransfer, bubbles:true, cancelable:true}))) {
+     key.dispatchEvent(new DragEvent('drop', {dataTransfer, bubbles:true, cancelable:true}));
+   }
+ })()`);
+ await drag('Digit1', 'KeyW');
+ assert.deepEqual(await hotkeys(), ['1', '1']);
+ await drag('Digit1', 'KeyF');
+ assert.deepEqual(await hotkeys(), ['F', 'F']);
+ await screenshot('skill-keyboard');
+ await press('Tab', 'Tab');
+ assert(await evaluate("wildsGame.skillKeyboard.hidden && !wildsGame.paused"));
+ await press('Digit1', '1');
+ assert.equal(await evaluate('wildsGame.selectedSlot.index'), 3);
+ const aim = await evaluate(`(() => {const r = wildsGame.canvas.getBoundingClientRect();return {x:r.left+r.width*.75,y:r.top+r.height*.5};})()`);
+ await send('Input.dispatchMouseEvent', {type:'mouseMoved', ...aim});
+ await press('KeyF', 'f');
  await delay(1200);
  assert.equal(await evaluate("wildsGame.inventory.equipment[0].durability"),4);
+ assert.equal(await evaluate("wildsGame.inventory.equipment[3].durability"),5);
+ assert(await evaluate("wildsGame.holyGunRemaining(wildsGame.inventory.equipment[0]) === wildsGame.holyGunRemaining(wildsGame.inventory.equipment[3])"));
  assert.equal(await evaluate("wildsGame.projectiles.some(p=>p.type==='culling_bullet'&&p.owner==='player')"),true);
  assert.equal(await evaluate("wildsGame.inventoryButtons.equipment[0].querySelector('.skill-durability').textContent"),'4/5');
  assert.equal(await evaluate("wildsGame.inventoryButtons.equipment[0].querySelector('.skill-cooldown').textContent.includes('s')"),true);
@@ -58,5 +97,5 @@ try {
  await send('Input.dispatchKeyEvent',{type:'keyUp',code:'KeyA',key:'a'});await delay(60);
  const stoppedX=await evaluate('wildsGame.player.x');await delay(150);assert.equal(await evaluate('wildsGame.player.x'),stoppedX);
  assert.equal(await evaluate('wildsGame.renderer.projectileCanvas.hidden'),true);
- assert.deepEqual(errors,[]);console.log('Lucian browser check passed: blue projectiles, R activation, durability and cooldown UI.');
+ assert.deepEqual(errors,[]);console.log('Lucian browser check passed: skill keyboard, rebinding, shared cooldown, leftmost durability and projectiles.');
 }finally{ws.close();}

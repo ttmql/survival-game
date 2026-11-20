@@ -213,7 +213,10 @@ const STATE_EXPRESSION = `(() => {
       active: Boolean(object.active)
     })),
     attackDamage: g.player.attackDamage,
-    respawn: g.respawn ? { tx: g.respawn.tx, ty: g.respawn.ty } : null,
+    respawn: (() => {
+      const point = g.isDead ? g.respawn : g.nearestRespawnStele(g.player.x, g.player.y);
+      return point ? { tx: point.tx, ty: point.ty } : null;
+    })(),
     baseRespawn: g.baseRespawn ? { tx: g.baseRespawn.tx, ty: g.baseRespawn.ty } : null,
     exploredCount: g.explored.size,
     mapOpen: g.mapOpen,
@@ -1422,7 +1425,7 @@ async function main() {
 
   await cdp.screenshot(join(shotDir, "browser-new-world.png"));
 
-  // Keyboard shortcut N should also create a fresh world.
+  // N is available for skill binding without regenerating the world.
   const seedBeforeN = afterNewWorld.seed;
   await cdp.send("Input.dispatchKeyEvent", {
     type: "keyDown",
@@ -1440,7 +1443,7 @@ async function main() {
   });
   await delay(500);
   const afterN = await cdp.evaluate(STATE_EXPRESSION);
-  check("N shortcut generates a new world", afterN.seed !== seedBeforeN);
+  check("N does not regenerate the world", afterN.seed === seedBeforeN);
 
   // ---------- Workbench placement and crafting ----------
 
@@ -2764,7 +2767,7 @@ async function main() {
 
   await cdp.evaluate(`(() => {
     const g = window.wildsGame;
-    g.respawn = null;
+    g.activeRespawnSteles.clear();
     g.player.health = 0;
     return true;
   })()`);

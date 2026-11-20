@@ -57,6 +57,68 @@
     "Space",
   ]);
 
+  const SKILL_KEY_ROWS = [
+    ["Escape", ..."1234567890".split("").map(key => "Digit" + key)],
+    ["Tab", ..."QWERTYUIOP".split("").map(key => "Key" + key)],
+    [..."ASDFGHJKL".split("").map(key => "Key" + key)],
+    ["ShiftLeft", ..."ZXCVBNM".split("").map(key => "Key" + key), "ShiftRight"],
+    ["Space", "ArrowLeft", "ArrowUp", "ArrowDown", "ArrowRight"],
+  ];
+  const SKILL_KEY_LABELS = {
+    Escape: "Esc", Tab: "Tab", ShiftLeft: "Shift", ShiftRight: "Shift", Space: "空格",
+    ArrowLeft: "←", ArrowUp: "↑", ArrowDown: "↓", ArrowRight: "→",
+  };
+  const FIXED_KEYS = {
+    Escape: "退出", Tab: "按键切换", Space: "暂停",
+    KeyW: "向上", KeyA: "向左", KeyS: "向下", KeyD: "向右",
+    ArrowUp: "向上", ArrowLeft: "向左", ArrowDown: "向下", ArrowRight: "向右",
+    ShiftLeft: "奔跑", ShiftRight: "奔跑", KeyM: "地图",
+  };
+
+  // Higher overlays come first. Gameplay state and audio don't depend on this list.
+  const GAME_PANELS = {
+    exitConfirmation: { overlay: "exitConfirmOverlay", layered: true },
+    skillKeyboard: { overlay: "skillKeyboard", layered: true },
+    summoner: { overlay: "summonerOverlay" },
+    map: {
+      overlay: "mapOverlay",
+      onClose(game) {
+        game.mapPortalTarget = null;
+        game.mapDragging = false;
+        game.worldMapCanvas.classList.remove("is-dragging");
+      },
+    },
+    backpack: {
+      overlay: "backpackOverlay",
+      onClose(game) {
+        game.swapSelection = null;
+        game.creativePick = null;
+        game.bagButton.setAttribute("aria-expanded", "false");
+        game.selectedSlot = null;
+        game.renderInventory();
+        game.syncHeldStats();
+      },
+    },
+    workbench: {
+      overlay: "workbenchOverlay",
+      onClose(game) { game.workbenchFeedback.textContent = ""; },
+    },
+    storage: {
+      overlay: "storageOverlay",
+      onClose(game) { game.panelSelection = null; game.storageObject = null; },
+    },
+    furnace: {
+      overlay: "furnaceOverlay",
+      onClose(game) { game.panelSelection = null; game.furnaceObject = null; },
+    },
+    stele: { overlay: "steleOverlay" },
+  };
+  const GAME_PANEL_NAMES = Object.keys(GAME_PANELS);
+
+  function skillKeyLabel(code) {
+    return SKILL_KEY_LABELS[code] || code.replace(/^(Key|Digit)/, "");
+  }
+
   function randomUint32() {
     if (globalThis.crypto && typeof globalThis.crypto.getRandomValues === "function") {
       const buffer = new Uint32Array(1);
@@ -228,6 +290,17 @@
       this.running = true;
       this.paused = false;
       this.pauseOverlay = document.getElementById("pauseOverlay");
+      this.skillKeyboard = document.getElementById("skillKeyboard");
+      this.skillKeyboardGrid = document.getElementById("skillKeyboardGrid");
+      this.summonerOverlay = document.getElementById("summonerOverlay");
+      this.summonerStatus = document.getElementById("summonerStatus");
+      this.summonerSpells = document.getElementById("summonerSpells");
+      document.getElementById("closeSummoner").addEventListener("click", () => this.closeGamePanel("summoner"));
+      this.summonerSpells.addEventListener("click", event => {
+        const spell = event.target.closest("[data-spell]");
+        if (spell && this.summoner?.select(spell.dataset.spell)) this.renderInventory();
+      });
+      document.getElementById("closeSkillKeyboard").addEventListener("click", () => this.toggleSkillKeyboard());
       document.getElementById("resumeGame").addEventListener("click",()=>this.togglePause());
 
       this.inventory = new Wilds.Inventory();
@@ -276,6 +349,7 @@
       this.audio = new Wilds.AudioDirector();
       this.placedObjects = new Map();
       this.placedObjectTiles = new Map();
+      this.activeRespawnSteles = new Set();
       this.placedObjectSequence = 0;
       this.lastPlayerSafe = null;
       this.explored = new Set();
@@ -283,6 +357,7 @@
       this.lastExploredTileX = null;
       this.lastExploredTileY = null;
       this.baseRespawn = null;
+      // The destination selected for the current death.
       this.respawn = null;
       this.lastDeath = null;
       this.mapOpen = false;
@@ -344,6 +419,7 @@
       if (this.isDead || !this.player) return;
 
       this.isDead = true;
+      this.summoner?.onDeath();
       if (this.deathTitle) this.deathTitle.textContent = this.deathReasonText();
       this.player.health = 0;
       this.keys.clear();
@@ -352,12 +428,7 @@
       this.holyGunCasts=[];
       this.clearPortalEffects();
       this.clearFoodPress();
-      this.closeMap();
-      this.closeWorkbench();
-      this.closeStele();
-      this.closeStorage();
-      this.closeFurnace();
-      if (this.backpackOpen) this.closeBackpack();
+      this.closeGamePanels();
       this.releaseMiningPointer();
       this.cancelMining();
       this.pointerInside = false;
@@ -381,6 +452,7 @@
       }
       this.renderInventory();
       this.lastDeath = { tx, ty };
+      this.respawn = this.nearestRespawnStele(this.player.x, this.player.y);
       const canRespawn = Boolean(this.respawn);
       this.deathHint.hidden = !canRespawn;
       this.respawnButton.hidden = !canRespawn;
@@ -396,12 +468,13 @@
 
     closeDeath() {
       this.isDead = false;
+      this.respawn = null;
       this.deathOverlay.hidden = true;
       this.deathHint.hidden = false;
       this.respawnButton.hidden = false;
       this.deathNoRespawn.hidden = true;
       this.deathNewGameBtn.hidden = true;
-      this.bagButton.disabled = this.backpackOpen || this.workbenchOpen || this.steleOpen;
+      this.bagButton.disabled = Boolean(this.activeGamePanel());
     }
 
     findRespawnPosition(tx, ty) {
@@ -420,6 +493,21 @@
       return { tx, ty };
     }
 
+    nearestRespawnStele(x, y) {
+      let nearest = null;
+      let nearestDistanceSquared = Infinity;
+      for (const stele of this.activeRespawnSteles) {
+        const dx = (stele.tx + 0.5) * CONFIG.TILE_SIZE - x;
+        const dy = (stele.ty + 0.5) * CONFIG.TILE_SIZE - y;
+        const distanceSquared = dx * dx + dy * dy;
+        if (distanceSquared < nearestDistanceSquared) {
+          nearest = stele;
+          nearestDistanceSquared = distanceSquared;
+        }
+      }
+      return nearest;
+    }
+
     respawnPlayer() {
       if (!this.isDead || !this.respawn) return;
       const point = this.respawn;
@@ -428,6 +516,7 @@
       const ty = spot.ty;
 
       this.isDead = false;
+      this.respawn = null;
       this.deathOverlay.hidden = true;
       this.player.x = (tx + 0.5) * CONFIG.TILE_SIZE;
       this.player.y = (ty + 0.5) * CONFIG.TILE_SIZE;
@@ -438,14 +527,9 @@
       this.player.health = this.player.maxHealth;
       this.player.oxygen = this.player.maxOxygen;
       this.player.satiety = this.player.maxSatiety;
-      this.player.manureDietHours = 0;
       this.satietyGraceRemaining = CONFIG.SATIETY_GRACE_HOURS;
-      this.player.poisonRemainingHours = 0;
-      this.player.poisonDamageRemaining = 0;
-      this.player.poisonSources = [];
+      this.player.clearNegativeEffects();
       this.player.deathCause = null;
-      this.player.slowRemainingHours = 0;
-      this.player.speedFactor = 1;
       this.player.isDiving = this.player.waterDepth === 2;
       this.player.isWading = this.player.waterDepth === 1;
       this.player.attackDamage = this.player.baseAttackDamage;
@@ -497,47 +581,44 @@
     bindEvents() {
       document.addEventListener("keydown", (event) => {
         if (!this.started) return;
-        if (this.exitConfirmationOpen) { if (event.code === "Escape") this.cancelExitGame(); return; }
         if (event.ctrlKey || event.metaKey || event.altKey) return;
+        if (event.code === "Escape") {
+          if (!event.repeat && this.closeGamePanel()) event.preventDefault();
+          return;
+        }
+        if (this.exitConfirmationOpen) return;
         if(event.target?.matches?.("input,textarea,[contenteditable=true]"))return;
+        if (event.code === "Tab" && !this.isDead && !this.sleeping) {
+          event.preventDefault();
+          if (!event.repeat) this.toggleSkillKeyboard();
+          return;
+        }
+        const panel = this.activeGamePanel();
+        if (panel === "skillKeyboard") return;
         if(event.code === "Space") {event.preventDefault();if(!event.repeat)this.togglePause();return;}
         if(this.paused)return;
         if(event.code === "KeyF" && !event.repeat && this.isCreative() && this.canSwitchHeldSlot()) {
           event.preventDefault(); this.player.fastTravel = !this.player.fastTravel; this.updateModeUI(); return;
         }
-        if(event.code==="KeyR" && !event.repeat) {
-          if (this.mapOpen && this.getHeldEquipment()?.item.skill === "portal") {
-            event.preventDefault(); this.startPortal(true); return;
-          }
-          if(this.canSwitchHeldSlot()){event.preventDefault();this.getHeldEquipment()?.item.skill === "portal" ? this.startPortal() : this.startHolyGun();}
-          return;
-        }
-
-        // Number keys select the exact hotbar slot, including empty slots.
-        const hotbarKey = /^(?:Digit|Numpad)([1-8])$/.exec(event.code);
-        if (hotbarKey) {
-          if (!this.canSwitchHeldSlot()) return;
+        const code = event.code.replace(/^Numpad([0-9])$/, "Digit$1");
+        const skill = this.skillBindings.get(code);
+        if (skill) {
           event.preventDefault();
-          this.selectedSlot = { area: "equipment", index: Number(hotbarKey[1]) - 1 };
-          this.lastSlotClick = null;
-          this.cancelMining();
-          this.hideItemDetails();
-          this.renderSelection();
-          this.syncHeldStats();
+          const mapCast = panel === "map" && (skill.item.skill === "portal" ||
+            skill.item.skill === "summoner" && this.summoner?.selection === "teleport");
+          if (!event.repeat && (this.canSwitchHeldSlot() || mapCast)) {
+            if (skill.item.skill === "portal") this.startPortal(mapCast, skill);
+            if (skill.item.skill === "culling") this.startHolyGun(skill);
+            if (skill.item.skill === "summoner") this.summoner.start(skill, mapCast);
+          }
           return;
         }
 
-        if (MOVEMENT_CODES.has(event.code)) {
+        if (this.canUseWorldInput() && MOVEMENT_CODES.has(event.code)) {
           this.keys.add(event.code);
           if (PREVENT_SCROLL_CODES.has(event.code)) {
             event.preventDefault();
           }
-        }
-
-        if (event.code === "KeyN" && !event.repeat) {
-          event.preventDefault();
-          this.regenerate(false);
-          return;
         }
 
         if (event.code === "KeyM" && !event.repeat) {
@@ -644,8 +725,8 @@
       this.player.creative = creative; this.player.fastTravel = false;
       if (creative) {
         this.player.health = this.player.maxHealth; this.player.satiety = this.player.maxSatiety; this.player.oxygen = this.player.maxOxygen;
-        this.player.deathCause = null; this.player.poisonRemainingHours = 0; this.player.poisonDamageRemaining = 0;
-        this.player.poisonSources = []; this.player.slowRemainingHours = 0; this.player.speedFactor = 1; this.player.manureDietHours = 0;
+        this.player.deathCause = null;
+        this.player.clearNegativeEffects();
         for (const mob of this.mobs) { mob.aggro = false; mob.provoked = false; mob.fleeUntil = 0; }
         this.combatMusicUntil = 0;
       }
@@ -712,25 +793,23 @@
     }
 
     requestExitGame() {
-      if (!this.started || this.exitConfirmationOpen) return;
-      this.exitWasPaused = this.paused;
-      if (!this.paused && !this.isDead) this.togglePause();
-      this.exitConfirmationOpen = true; this.exitConfirmOverlay.hidden = false;
+      if (this.started) this.openGamePanel("exitConfirmation");
     }
 
     cancelExitGame() {
-      this.exitConfirmationOpen = false; this.exitConfirmOverlay.hidden = true;
-      if (!this.exitWasPaused && this.paused && !this.isDead) this.togglePause();
+      this.closeGamePanel("exitConfirmation");
     }
 
     returnToStart() {
       this.closeSleep(); this.clearPortalEffects(); this.clearFoodPress(); this.releaseMiningPointer(); this.cancelMining();
-      for (const close of ["closeBackpack","closeWorkbench","closeStele","closeStorage","closeFurnace","closeMap","closeDeath"]) this[close]();
-      this.exitConfirmationOpen = false; this.exitConfirmOverlay.hidden = true;
+      this.closeGamePanels();
+      this.closeDeath();
       this.started = false; this.paused = false; this.pauseOverlay.hidden = true; this.isDead = false;
       this.keys.clear(); this.mobs = []; this.projectiles = []; this.drops = []; this.giftEffects = []; this.waterEffects = [];
       this.placedObjects.clear(); this.placedObjectTiles.clear(); this.explored.clear(); this.farm?.clear(); this.farmVisited?.clear(); this.farmTrees?.clear();
+      this.activeRespawnSteles.clear();
       this.roomIndex = null; this.world = null; this.player = null; this.renderer.setWorld(null);
+      this.summoner = null;
       this.inventory = new Wilds.Inventory(); this.holyGunCasts = []; this.lucianSpawnNights = new Set();
       this.selectedSlot = {area:"equipment",index:0}; this.swapSelection = null; this.creativePick = null; this.gameMode = "survival";
       this.lastFrameTime = 0; this.elapsed = 0; this.seed = null; this.seedText = "";
@@ -748,7 +827,7 @@
       if (monsterVisible) {
         this.combatMusicUntil = now + 4000;
       }
-      if (this.player?.moving && !this.mapOpen && !this.sleeping && !this.isDead) {
+      if (this.player?.moving && this.canUseWorldInput()) {
         const last = this.lastStepPosition;
         if (last && Math.hypot(this.player.x-last.x,this.player.y-last.y)>0.05 && now >= (this.nextStepSoundAt || 0)) {
           const medium = this.player.waterDepth ? "water" : this.player.terrain === TERRAIN.ROCK ? "rock" : "grass";
@@ -790,13 +869,17 @@
 
       this.seed = nextSeed;
       this.seedText = seedText;
-      this.world = Wilds.World.createWorld(nextSeed);
+      const testMap = this.started && seedText === Wilds.TestMap.seedText ? Wilds.TestMap : null;
+      this.world = Wilds.World.createWorld(nextSeed, testMap?.layout);
       this.initFarming();
       this.firstNightLucianSpawned=false;
       this.firstNightLucianHour=20+Math.random()*3;
       this.nextFirstNightLucianAttempt=0;
       this.lucianSpawnNights=new Set();
       this.holyGunTime=0;this.holyGunCasts=[];
+      this.summoner = new Wilds.SummonerBracelet(this);
+      this.skillKeyPreferences = new Map();
+      this.skillReadyAtByItem = new Map();
       this.portalEffects = []; this.portalSequence = 0;
       this.player = new Wilds.Player(this.world);
       this.player.creative = this.isCreative();
@@ -809,13 +892,12 @@
       this.clock.reset();
 
       this.closeDeath();
-      this.closeMap();
+      this.closeGamePanels();
       this.closeSleep();
       this.clearFoodPress();
       this.combatMusicUntil = 0;
       this.isDead = false;
       this.baseRespawn = null;
-      this.respawn = null;
       this.lastDeath = null;
       this.explored.clear();
       this.lastExploredTileX = null;
@@ -826,6 +908,13 @@
       this.drops = [];
       this.placedObjects.clear();
       this.placedObjectTiles.clear();
+      this.activeRespawnSteles.clear();
+      if (testMap) {
+        testMap.populate(this.farm, (itemId, tx, ty) => {
+          this.addPlacedObject(Wilds.ITEMS[itemId], tx, ty, [{ tx, ty }]);
+        });
+        this.clock.setTimeOfDay(testMap.startHour);
+      }
       this.invalidateRooms();
       this.mobs = [];
       this.projectiles = [];
@@ -838,11 +927,6 @@
       this.selectedSlot = {area:"equipment",index:0};
       this.swapSelection=null;
       this.hideItemDetails();
-      this.closeWorkbench();
-      this.closeStele();
-      this.closeStorage();
-      this.closeFurnace();
-      if (this.backpackOpen) this.closeBackpack();
       this.renderInventory();
       this.syncHeldStats();
 
@@ -872,18 +956,160 @@
     }
 
     canSwitchHeldSlot() {
-      if(this.paused)return false;
-      return (
-        this.started &&
-        !this.isDead &&
-        !this.sleeping &&
-        !this.mapOpen &&
-        !this.backpackOpen &&
-        !this.workbenchOpen &&
-        !this.steleOpen &&
-        !this.storageOpen &&
-        !this.furnaceOpen
-      );
+      return this.started && this.canUseWorldInput();
+    }
+
+    activeGamePanel() {
+      return GAME_PANEL_NAMES.find(name => this[name + "Open"]);
+    }
+
+    canUseWorldInput() {
+      return !this.paused && !this.isDead && !this.sleeping && !this.activeGamePanel();
+    }
+
+    openGamePanel(name) {
+      const panel = GAME_PANELS[name];
+      if (this[name + "Open"]) return false;
+      if (!panel.layered) this.closeGamePanels();
+
+      this.keys.clear();
+      this.releaseMiningPointer();
+      this.cancelMining();
+      this.clearFoodPress();
+      this.pointerInside = false;
+      this.pointerTile = null;
+      this.hoverTarget = null;
+      this.hideItemDetails();
+      this[name + "Open"] = true;
+      this[panel.overlay].hidden = false;
+      this.bagButton.disabled = true;
+      return true;
+    }
+
+    closeGamePanel(name = this.activeGamePanel()) {
+      if (!name || !this[name + "Open"]) return false;
+      const panel = GAME_PANELS[name];
+      this[name + "Open"] = false;
+      this[panel.overlay].hidden = true;
+      panel.onClose?.(this);
+      this.clearFoodPress();
+      this.hideItemDetails();
+      this.bagButton.disabled = this.isDead || Boolean(this.activeGamePanel());
+      return true;
+    }
+
+    closeGamePanels() {
+      for (const name of GAME_PANEL_NAMES) this.closeGamePanel(name);
+    }
+
+    getEquippedSkills() {
+      const skills = [];
+      const seen = new Set();
+      this.inventory.equipment.forEach((stack, index) => {
+        const item = this.inventory.itemDefinition(stack?.itemId);
+        if (!item?.skill || seen.has(item.id)) return;
+        seen.add(item.id);
+        skills.push({ area: "equipment", index, item, stack });
+      });
+      return skills;
+    }
+
+    fixedKeyAction(code) {
+      if (code === "KeyF" && this.sessionMode === "creative") {
+        return this.isCreative() ? "快速疾行" : "创造模式疾行";
+      }
+      return FIXED_KEYS[code];
+    }
+
+    updateSkillBindings() {
+      const skills = this.getEquippedSkills();
+      const bindings = new Map();
+      const unassigned = [];
+      for (const skill of skills) {
+        const preferred = this.skillKeyPreferences?.get(skill.item.id);
+        if (preferred && !this.fixedKeyAction(preferred) && !bindings.has(preferred)) {
+          bindings.set(preferred, skill);
+        } else {
+          unassigned.push(skill);
+        }
+      }
+      for (const skill of unassigned) {
+        let code = "Digit" + (skill.index + 1);
+        if (bindings.has(code)) {
+          code = SKILL_KEY_ROWS[0].slice(1, 9).find(key => !bindings.has(key));
+        }
+        bindings.set(code, skill);
+      }
+      this.skillBindings = bindings;
+    }
+
+    toggleSkillKeyboard() {
+      if (this.closeGamePanel("skillKeyboard")) return;
+      this.openGamePanel("skillKeyboard");
+      this.renderSkillKeyboard();
+      document.getElementById("closeSkillKeyboard").focus();
+    }
+
+    renderSkillKeyboard() {
+      this.skillKeyboardGrid.replaceChildren();
+      for (const row of SKILL_KEY_ROWS) {
+        const keys = document.createElement("div");
+        keys.className = "skill-key-row";
+        for (const code of row) {
+          const key = document.createElement("div");
+          key.className = "skill-key";
+          key.dataset.code = code;
+          const label = document.createElement("kbd");
+          label.textContent = skillKeyLabel(code);
+          key.appendChild(label);
+
+          const action = this.fixedKeyAction(code);
+          const skill = this.skillBindings.get(code);
+          if (action) {
+            key.classList.add("is-fixed");
+            const caption = document.createElement("span");
+            caption.textContent = action;
+            key.appendChild(caption);
+          } else {
+            if (skill) {
+              const icon = document.createElement("div");
+              icon.className = "skill-key-icon";
+              icon.draggable = true;
+              icon.title = skill.item.name;
+              icon.setAttribute("aria-label", skill.item.name);
+              icon.innerHTML = Wilds.itemIcon(skill.item);
+              icon.addEventListener("dragstart", event => {
+                event.dataTransfer.setData("text/plain", code);
+                event.dataTransfer.effectAllowed = "move";
+              });
+              key.appendChild(icon);
+            }
+            key.addEventListener("dragover", event => {
+              event.preventDefault();
+              event.dataTransfer.dropEffect = "move";
+            });
+            key.addEventListener("drop", event => {
+              event.preventDefault();
+              this.moveSkillBinding(event.dataTransfer.getData("text/plain"), code);
+            });
+          }
+          keys.appendChild(key);
+        }
+        this.skillKeyboardGrid.appendChild(keys);
+      }
+    }
+
+    moveSkillBinding(from, to) {
+      const skill = this.skillBindings.get(from);
+      if (!skill || from === to || this.fixedKeyAction(to) || !SKILL_KEY_ROWS.some(row => row.includes(to))) return;
+      const other = this.skillBindings.get(to);
+      for (const [itemId, code] of this.skillKeyPreferences) {
+        if (code === to || other && code === from) this.skillKeyPreferences.delete(itemId);
+      }
+      this.skillKeyPreferences.set(skill.item.id, to);
+      if (other) this.skillKeyPreferences.set(other.item.id, from);
+      this.renderInventory();
+      this.renderSkillKeyboard();
     }
 
     cycleHeldSlot(direction) {
@@ -907,6 +1133,7 @@
     }
 
     readInput() {
+      if (this.summoner?.channel) return { x: 0, y: 0, sprint: false };
       const keys = this.keys;
 
       const left = keys.has("KeyA") || keys.has("ArrowLeft");
@@ -1018,11 +1245,11 @@
         }
       }
 
-      // Respawn marker or direction arrow, behind the player marker.
-      const respawn = this.respawn;
-      if (respawn) {
-        const dx = respawn.tx - this.player.tileX;
-        const dy = respawn.ty - this.player.tileY;
+      // Show all nearby steles, with just one direction arrow for the nearest.
+      const respawn = this.isDead ? this.respawn : this.nearestRespawnStele(this.player.x, this.player.y);
+      for (const stele of this.activeRespawnSteles) {
+        const dx = stele.tx - this.player.tileX;
+        const dy = stele.ty - this.player.tileY;
         const mapX = centerX + dx * scale;
         const mapY = centerY + dy * scale;
 
@@ -1033,7 +1260,7 @@
           ctx.fillRect(Math.round(mapX) - 2, Math.round(mapY) - 2, 4, 4);
           ctx.fillStyle = "#fff0ae";
           ctx.fillRect(Math.round(mapX), Math.round(mapY) - 3, 1, 1);
-        } else {
+        } else if (stele === respawn) {
           const angle = Math.atan2(dy, dx);
           const cos = Math.cos(angle);
           const sin = Math.sin(angle);
@@ -1101,42 +1328,21 @@
       this.minimapCanvas.setAttribute(
         "aria-label",
         "附近小地图" +
-        (respawn ? "，复活点在 " + formatCoordinate(respawn.tx) + "，" + formatCoordinate(respawn.ty) : "，尚未设置复活点") +
+        (respawn ? "，最近复活点在 " + formatCoordinate(respawn.tx) + "，" + formatCoordinate(respawn.ty) : "，尚未设置复活点") +
         (this.lastDeath ? "，上次死亡点在 " + formatCoordinate(this.lastDeath.tx) + "，" + formatCoordinate(this.lastDeath.ty) : "")
       );
     }
 
     openMap() {
-      if (!this.world || this.isDead) return;
-      this.closeWorkbench();
-      this.closeStele();
-      this.closeStorage();
-      this.closeFurnace();
-      if (this.backpackOpen) this.closeBackpack();
-
-      this.mapOpen = true;
+      if (!this.world || this.isDead || this.sleeping || !this.openGamePanel("map")) return;
       this.mapPortalTarget = null;
-      this.mapOverlay.hidden = false;
-      this.bagButton.disabled = true;
-      this.keys.clear();
-      this.releaseMiningPointer();
-      this.cancelMining();
-      this.pointerInside = false;
-      this.pointerTile = null;
-      this.hoverTarget = null;
-      this.hideItemDetails();
       this.mapCamX = this.player.tileX - this.worldMapCanvas.width / (2 * MAP_SCALE);
       this.mapCamY = this.player.tileY - this.worldMapCanvas.height / (2 * MAP_SCALE);
       this.drawBigMap();
     }
 
     closeMap() {
-      this.mapOpen = false;
-      this.mapPortalTarget = null;
-      this.mapDragging = false;
-      this.mapOverlay.hidden = true;
-      this.worldMapCanvas.classList.remove("is-dragging");
-      this.bagButton.disabled = this.backpackOpen || this.workbenchOpen || this.steleOpen || this.isDead;
+      this.closeGamePanel("map");
     }
 
     toggleMap() {
@@ -1196,9 +1402,10 @@
         ctx.fill();
       }
 
-      if (this.respawn) {
-        const respawnX = (this.respawn.tx + 0.5 - this.mapCamX) * scale;
-        const respawnY = (this.respawn.ty + 0.5 - this.mapCamY) * scale;
+      const respawn = this.nearestRespawnStele(this.player.x, this.player.y);
+      for (const stele of this.activeRespawnSteles) {
+        const respawnX = (stele.tx + 0.5 - this.mapCamX) * scale;
+        const respawnY = (stele.ty + 0.5 - this.mapCamY) * scale;
         if (respawnX > 12 && respawnX < width - 12 && respawnY > 12 && respawnY < height - 12) {
           ctx.save();
           ctx.translate(respawnX, respawnY);
@@ -1210,7 +1417,7 @@
           ctx.fillStyle = "#fff0ae";
           ctx.fillRect(-2, -2, 4, 4);
           ctx.restore();
-        } else {
+        } else if (stele === respawn) {
           const angle = Math.atan2(respawnY - height / 2, respawnX - width / 2);
           this.drawMapArrow(
             ctx,
@@ -1248,8 +1455,9 @@
         }
       }
 
-      this.mapRespawnCoords.textContent = this.respawn
-        ? "复活点：" + formatCoordinate(this.respawn.tx) + " · " + formatCoordinate(this.respawn.ty)
+      this.mapRespawnCoords.textContent = respawn
+        ? "最近复活点（共 " + this.activeRespawnSteles.size + " 处）：" +
+          formatCoordinate(respawn.tx) + " · " + formatCoordinate(respawn.ty)
         : "复活点：尚未设置";
       this.mapExploredCount.textContent =
         (this.lastDeath
@@ -1259,7 +1467,7 @@
     }
 
     updateMapPortalTarget(clientX, clientY) {
-      if (!this.mapOpen || this.getHeldEquipment()?.item.skill !== "portal") return;
+      if (!this.mapOpen) return;
       const rect = this.worldMapCanvas.getBoundingClientRect();
       const x = (clientX - rect.left) * this.worldMapCanvas.width / Math.max(1, rect.width);
       const y = (clientY - rect.top) * this.worldMapCanvas.height / Math.max(1, rect.height);
@@ -1269,13 +1477,25 @@
     }
 
     drawMapPortalPreview() {
-      const held = this.getHeldEquipment();
-      if (this.mapActionHint) this.mapActionHint.textContent = held?.item.skill === "portal"
-        ? `拖动查看 · 鼠标选点，按R传送 · ${CONFIG.MAP_PORTAL_RANGE}格内已探索区域` : "按住拖动地图";
-      if (held?.item.skill !== "portal" || !this.mapPortalTarget) return;
+      const portal = this.getEquippedSkills().find(skill => skill.item.skill === "portal");
+      const key = portal && this.skillBindingLabel(portal.item.id);
+      const bracelet = this.summoner?.selection === "teleport" && this.summoner.equipped();
+      const braceletKey = bracelet && this.skillBindingLabel(bracelet.item.id);
+      const hints = [];
+      if (key) hints.push(`${key} 虫洞 ${CONFIG.MAP_PORTAL_RANGE}格`);
+      if (braceletKey) hints.push(`${braceletKey} 手环传送 120格`);
+      if (this.mapActionHint) this.mapActionHint.textContent = hints.length
+        ? `拖动地图 · 鼠标选点 · ${hints.join(" · ")} · 仅限已探索区域` : "按住拖动地图";
+      const preview = braceletKey && this.summoner.teleportPreview(this.mapPortalTarget, true);
+      if (preview) {
+        const x = (preview.x / CONFIG.TILE_SIZE - this.mapCamX) * MAP_SCALE;
+        const y = (preview.y / CONFIG.TILE_SIZE - this.mapCamY) * MAP_SCALE;
+        this.renderer.drawSummonerTarget(this.worldMapCtx, x, y, preview.valid, 8);
+      }
+      if (!portal || !this.mapPortalTarget) return;
       const target = this.portalPlan(this.mapPortalTarget.x, this.mapPortalTarget.y, true);
       const ctx = this.worldMapCtx, previous = this.renderer.ctx;
-      const valid = target.valid && this.holyGunRemaining(held.stack) <= 0;
+      const valid = target.valid && this.holyGunRemaining(portal.stack) <= 0;
       ctx.save();
       try {
         this.renderer.ctx = ctx;
@@ -1317,7 +1537,8 @@
         if (!this.mapOpen) return;
         if (!this.mapDragging) {
           this.updateMapPortalTarget(event.clientX, event.clientY);
-          if (this.getHeldEquipment()?.item.skill === "portal") this.drawBigMap();
+          if (this.getEquippedSkills().some(gear => gear.item.skill === "portal") ||
+              this.summoner?.selection === "teleport" && this.summoner.equipped()) this.drawBigMap();
           return;
         }
         event.preventDefault();
@@ -1340,7 +1561,11 @@
 
       this.worldMapCanvas.addEventListener("pointerup", endDrag);
       this.worldMapCanvas.addEventListener("pointercancel", endDrag);
-      this.worldMapCanvas.addEventListener("pointerleave", endDrag);
+      this.worldMapCanvas.addEventListener("pointerleave", () => {
+        endDrag();
+        this.mapPortalTarget = null;
+        if (this.mapOpen) this.drawBigMap();
+      });
     }
 
     loop(timestamp) {
@@ -1361,11 +1586,12 @@
       this.updateGiftEffects(delta);
       const now = performance.now();
 
-      if (!this.mapOpen && !this.isDead && !this.sleeping) {
+      if (!this.isDead && !this.sleeping) {
         this.clock.update(delta);
         this.updateFarming(delta);
         this.updateHolyGun(delta);
         this.updatePortalEffects(delta);
+        this.summoner.update(delta);
         this.spawnFirstNightLucian();
         const gameHoursDelta = (delta * Wilds.TIME_SCALE) / 3600;
         this.updateSurvival(gameHoursDelta);
@@ -1412,7 +1638,8 @@
         this.mobs,
         this.projectiles,
         this.getRoomIndex(),
-        this.giftEffects, this.farm, this.waterEffects, this.portalEffects
+        this.giftEffects, this.farm, this.waterEffects, this.portalEffects,
+        this.summoner, this.summoner.worldPreview()
       );
       this.syncHud(false);
 
@@ -1420,6 +1647,7 @@
       if (this.minimapAccumulator >= 0.1) {
         this.minimapAccumulator = 0;
         this.drawMinimap();
+        if (this.activeGamePanel() === "map") this.drawBigMap();
       }
 
       if (this.player.moving && !this.hintHidden) {
@@ -1578,6 +1806,7 @@
     }
 
     renderInventory() {
+      this.updateSkillBindings();
       for (const area of ["equipment", "backpack"]) {
         const buttons = this.inventoryButtons[area];
         for (let i = 0; i < buttons.length; i += 1) {
@@ -1588,6 +1817,7 @@
       if (this.workbenchOpen) {
         this.renderRecipes();
       }
+      if (this.summonerOpen) this.renderSummonerPanel();
     }
 
     renderSelection() {
@@ -1633,13 +1863,19 @@
       }
 
       let html = Wilds.itemIcon(item);
-      if((item.skill==="culling" || item.skill==="portal") && area==="equipment") {
-        const remaining=Math.ceil(this.holyGunRemaining(stack));
-        html+='<span class="skill-cooldown">'+(remaining?remaining+'s':'R')+'</span>';
-        html+='<span class="skill-durability">'+(this.isCreative() ? '∞' : (stack.durability??item.maxDurability)+'/'+item.maxDurability)+'</span>';
+      const skillKey = area === "equipment" && item.skill ? this.skillBindingLabel(item.id) : null;
+      if (skillKey) {
+        const remaining = Math.ceil(this.holyGunRemaining(stack));
+        if (item.skill === "summoner") {
+          html += `<span class="skill-name">${this.summoner.spell.name}</span>`;
+          const state = this.summoner.channel ? "引导" : remaining ? `${remaining}s` : "就绪";
+          html += `<span class="skill-cooldown">${state}</span>`;
+        } else if (remaining) html += `<span class="skill-cooldown">${remaining}s</span>`;
+        html += `<span class="skill-durability">${this.isCreative() ? "∞" : (stack.durability ?? item.maxDurability) + "/" + item.maxDurability}</span>`;
+        html += `<span class="skill-binding">${skillKey}</span>`;
       }
       if (this.isCreative() && item.maxDurability > 0) {
-        html += '<span class="item-count">∞</span>';
+        if (!skillKey) html += '<span class="item-count">∞</span>';
       } else if (item.kind === "equipment" && item.maxDurability > 0) {
         const maximum = item.maxDurability;
         const current = Math.max(0, Math.min(maximum, Number.isFinite(stack.durability) ? stack.durability : maximum));
@@ -1664,6 +1900,8 @@
       } else {
         aria += "，数量 " + stack.count;
       }
+      if (skillKey) aria += "，技能键 " + skillKey;
+      if (skillKey && item.skill === "summoner") aria += "，当前技能 " + this.summoner.spell.name + "，点击选择技能";
       aria += "，双击查看说明";
       button.setAttribute("aria-label", aria);
     }
@@ -1677,6 +1915,13 @@
       return { ...this.selectedSlot, stack, item };
     }
 
+    skillBindingLabel(itemId) {
+      for (const [code, skill] of this.skillBindings || []) {
+        if (skill.item.id === itemId) return skillKeyLabel(code);
+      }
+      return null;
+    }
+
     syncHeldStats() {
       if (!this.player) return;
       const held = this.getHeldEquipment();
@@ -1686,6 +1931,14 @@
 
     handleSlotClick(area, index) {
       if(this.paused)return;
+      if (area === "equipment" && this.canUseWorldInput() &&
+          this.inventory.getSlot(area, index)?.itemId === "summoner_bracelet") {
+        this.selectedSlot = { area, index };
+        this.openGamePanel("summoner");
+        this.renderInventory();
+        this.syncHeldStats();
+        return;
+      }
       if (this.isCreative()) {
         if (area !== "equipment") return;
         if (this.creativePick) {
@@ -1711,6 +1964,35 @@
       this.renderInventory();this.syncHeldStats();
       const stack=this.inventory.getSlot(area,index);
       if(stack)this.showItemDetails(stack,true,to);
+    }
+
+    renderSummonerPanel() {
+      const bracelet = this.summoner.equipped();
+      const cooldown = Math.ceil(this.summoner.remaining(bracelet));
+      const locked = !bracelet || cooldown > 0 || Boolean(this.summoner.channel);
+      const key = bracelet && this.skillBindingLabel(bracelet.item.id);
+      this.summonerStatus.textContent = this.summoner.channel ? "引导中，结束后可更改技能"
+        : cooldown ? `冷却剩余 ${cooldown} 秒 · 技能选择已锁定`
+        : key ? `按 ${key} 施放 · 按 Tab 更改键位` : "将手环放入装备栏即可使用";
+      if (!this.summonerSpells.childElementCount) {
+        for (const [id, spell] of Object.entries(Wilds.SUMMONER_SPELLS)) {
+          const button = document.createElement("button");
+          button.type = "button";
+          button.className = "summoner-spell";
+          button.dataset.spell = id;
+          button.style.setProperty("--spell-color", spell.color);
+          const title = document.createElement("strong");
+          title.textContent = spell.name;
+          const description = document.createElement("span");
+          description.textContent = spell.description;
+          button.append(title, description);
+          this.summonerSpells.appendChild(button);
+        }
+      }
+      for (const button of this.summonerSpells.children) {
+        button.setAttribute("aria-pressed", String(button.dataset.spell === this.summoner.selection));
+        button.disabled = locked;
+      }
     }
 
     sortBackpack() {
@@ -2015,55 +2297,24 @@
     }
 
     openWorkbench() {
-      if (this.workbenchOpen) return;
-      if (this.backpackOpen) this.closeBackpack();
-      this.closeStele();
-      this.closeStorage();
-      this.closeFurnace();
-
-      this.workbenchOpen = true;
-      this.workbenchOverlay.hidden = false;
-      this.bagButton.disabled = true;
+      if (!this.openGamePanel("workbench")) return;
       this.workbenchFeedback.textContent = "";
-      this.releaseMiningPointer();
-      this.cancelMining();
-      this.pointerInside = false;
-      this.pointerTile = null;
-      this.hoverTarget = null;
-      this.hideItemDetails();
       this.renderRecipes();
     }
 
     closeWorkbench() {
-      if (!this.workbenchOpen) return;
-      this.workbenchOpen = false;
-      this.workbenchOverlay.hidden = true;
-      this.workbenchFeedback.textContent = "";
-      this.bagButton.disabled = this.backpackOpen;
+      this.closeGamePanel("workbench");
     }
 
     openStorage(object) {
+      if (!this.openGamePanel("storage")) return;
       this.panelSelection = null;
-      this.closeWorkbench();
-      this.closeStele();
-      this.closeFurnace();
-      if (this.backpackOpen) this.closeBackpack();
       this.storageObject = object;
-      this.storageOpen = true;
-      this.storageOverlay.hidden = false;
-      this.bagButton.disabled = true;
-      this.hideItemDetails();
       this.renderStorage();
     }
 
     closeStorage() {
-      this.panelSelection = null;
-      if (!this.storageOpen) return;
-      this.storageOpen = false;
-      this.storageObject = null;
-      this.storageOverlay.hidden = true;
-      this.bagButton.disabled =
-        this.backpackOpen || this.workbenchOpen || this.steleOpen || this.furnaceOpen;
+      this.closeGamePanel("storage");
     }
 
     createItemButton(stack, label, onClick, selection = null) {
@@ -2186,27 +2437,14 @@
     }
 
     openFurnace(object) {
+      if (!this.openGamePanel("furnace")) return;
       this.panelSelection = null;
-      this.closeWorkbench();
-      this.closeStele();
-      this.closeStorage();
-      if (this.backpackOpen) this.closeBackpack();
       this.furnaceObject = object;
-      this.furnaceOpen = true;
-      this.furnaceOverlay.hidden = false;
-      this.bagButton.disabled = true;
-      this.hideItemDetails();
       this.renderFurnace();
     }
 
     closeFurnace() {
-      this.panelSelection = null;
-      if (!this.furnaceOpen) return;
-      this.furnaceOpen = false;
-      this.furnaceObject = null;
-      this.furnaceOverlay.hidden = true;
-      this.bagButton.disabled =
-        this.backpackOpen || this.workbenchOpen || this.steleOpen || this.storageOpen;
+      this.closeGamePanel("furnace");
     }
 
     renderFurnace() {
@@ -2276,30 +2514,13 @@
     }
 
     openStele() {
-      if (this.steleOpen) return;
-      if (this.backpackOpen) this.closeBackpack();
-      this.closeWorkbench();
-      this.closeStorage();
-      this.closeFurnace();
-
-      this.steleOpen = true;
-      this.steleOverlay.hidden = false;
-      this.bagButton.disabled = true;
+      if (!this.openGamePanel("stele")) return;
       this.steleTitle.textContent = "夸赞斌神的石碑";
       this.steleText.textContent = Wilds.STELE_TEXT;
-      this.releaseMiningPointer();
-      this.cancelMining();
-      this.pointerInside = false;
-      this.pointerTile = null;
-      this.hoverTarget = null;
-      this.hideItemDetails();
     }
 
     closeStele() {
-      if (!this.steleOpen) return;
-      this.steleOpen = false;
-      this.steleOverlay.hidden = true;
-      this.bagButton.disabled = this.backpackOpen;
+      this.closeGamePanel("stele");
     }
 
     tileInFront(distance) {
@@ -2340,44 +2561,20 @@
     }
 
     openBackpack() {
-      this.swapSelection=null;
-      if (this.backpackOpen) return;
-      this.closeWorkbench();
-      this.closeStele();
-      this.closeStorage();
-      this.closeFurnace();
-
-      this.backpackOpen = true;
-      this.backpackOverlay.hidden = false;
-      this.bagButton.disabled = true;
+      if (!this.openGamePanel("backpack")) return;
+      this.swapSelection = null;
       this.bagButton.setAttribute("aria-expanded", "true");
-      this.releaseMiningPointer();
-      this.cancelMining();
-      this.pointerInside = false;
-      this.pointerTile = null;
-      this.hoverTarget = null;
-      this.hideItemDetails();
     }
 
     closeBackpack() {
-      this.swapSelection=null;
-      if (!this.backpackOpen) return;
-
-      this.backpackOpen = false;
-      this.creativePick = null;
-      this.backpackOverlay.hidden = true;
-      this.bagButton.disabled = false;
-      this.bagButton.setAttribute("aria-expanded", "false");
-      this.selectedSlot = null;
-      this.renderInventory();
-      this.syncHeldStats();
-      this.hideItemDetails();
+      this.closeGamePanel("backpack");
     }
 
     /* ---------------- Mouse mining ---------------- */
 
     bindMiningEvents() {
       this.canvas.addEventListener("contextmenu", (event) => {
+        if (!this.canUseWorldInput()) return;
         const held = this.getHeldEquipment();
         if (held && held.stack.itemId === "creation_scroll") {
           event.preventDefault();
@@ -2688,28 +2885,7 @@
       const { valid, tiles } = this.placementPlan(held.item, tx, ty);
       if (!valid) return false;
 
-      const object = {
-        id: ++this.placedObjectSequence,
-        type: held.item.placeType,
-        itemId: held.item.id,
-        tx,
-        ty,
-        tiles,
-        open: false,
-        storage: held.item.placeType === "storage_chest" ? new Array(32).fill(null) : null,
-        fuel: held.item.placeType === "furnace" ? 0 : null,
-      };
-      object.storageKey = Wilds.Buildings.key(object);
-      this.placedObjects.set(object.storageKey, object);
-      for (const tile of tiles) {
-        const k = tile.tx + "," + tile.ty;
-        const previous = this.placedObjectTiles.get(k);
-        const occupants = previous instanceof Set ? previous : new Set(previous ? [previous] : []);
-        occupants.add(object);
-        this.placedObjectTiles.set(k, occupants);
-      }
-
-      this.invalidateRooms();
+      this.addPlacedObject(held.item, tx, ty, tiles);
       held.stack.count -= 1;
       if (held.stack.count <= 0) {
         this.inventory.removeSlot(held.area, held.index);
@@ -2727,6 +2903,31 @@
       this.hideItemDetails();
       if (this.audio) this.audio.playPlace();
       return true;
+    }
+
+    addPlacedObject(item, tx, ty, tiles) {
+      const object = {
+        id: ++this.placedObjectSequence,
+        type: item.placeType,
+        itemId: item.id,
+        tx,
+        ty,
+        tiles,
+        open: false,
+        storage: item.placeType === "storage_chest" ? new Array(32).fill(null) : null,
+        fuel: item.placeType === "furnace" ? 0 : null,
+      };
+      object.storageKey = Wilds.Buildings.key(object);
+      this.placedObjects.set(object.storageKey, object);
+      for (const tile of tiles) {
+        const k = tile.tx + "," + tile.ty;
+        const previous = this.placedObjectTiles.get(k);
+        const occupants = previous instanceof Set ? previous : new Set(previous ? [previous] : []);
+        occupants.add(object);
+        this.placedObjectTiles.set(k, occupants);
+      }
+
+      this.invalidateRooms();
     }
 
     // Open/interact with a placed object based on its type. Called on a
@@ -2772,7 +2973,7 @@
     activateRespawnStele(object) {
       object.active = true;
       object.activatedAt = performance.now();
-      this.respawn = { tx: object.tx, ty: object.ty };
+      this.activeRespawnSteles.add(object);
       if (this.audio) this.audio.playRespawnStele();
       this.drawMinimap();
       if (this.mapOpen) this.drawBigMap();
@@ -2833,7 +3034,7 @@
       const now = performance.now();
       for (const mob of this.mobs) {
         if (!mob.monster || mob.dying || mob.portalFrozen || this.closedRoomAtPosition(mob.x, mob.y)) continue;
-        mob.health = Math.max(0, mob.health - 10 * dt);
+        mob.health = Math.max(0, mob.health - 10 * dt * this.mobDamageMultiplier(mob));
         mob.hitFlashUntil = now + 120;
         if (mob.health <= 0) {
           this.beginMobDeath(mob, "sun");
@@ -2842,7 +3043,7 @@
     }
 
     miningTargetAt(tx, ty) {
-      if (!this.world || this.backpackOpen || this.workbenchOpen || this.steleOpen || this.mapOpen || this.isDead) return null;
+      if (!this.world || !this.canUseWorldInput()) return null;
       if (this.placedObjectAt(tx, ty)) return null;
       if (!this.withinRange(tx, ty, MINING_RANGE)) return null;
 
@@ -2903,7 +3104,7 @@
     }
 
     handlePointerMove(event) {
-      if (this.backpackOpen || this.workbenchOpen || this.steleOpen || this.mapOpen || this.isDead) return;
+      if (!this.canUseWorldInput()) return;
 
       this.pointerClientX = event.clientX;
       this.pointerClientY = event.clientY;
@@ -2921,8 +3122,7 @@
     }
 
     handlePointerDown(event) {
-      if(this.paused || this.player.portalFrozen)return;
-      if (this.backpackOpen || this.workbenchOpen || this.steleOpen || this.mapOpen || this.isDead || event.button !== 0) return;
+      if (!this.canUseWorldInput() || this.player.portalFrozen || event.button !== 0) return;
 
       this.pointerClientX = event.clientX;
       this.pointerClientY = event.clientY;
@@ -3089,6 +3289,10 @@
 
     handlePointerUp() {
       this.releaseMiningPointer();
+      if (!this.canUseWorldInput()) {
+        this.cancelMining();
+        return;
+      }
       const candidate = this.objectClickCandidate;
       const groundClick=this.groundClickCandidate;
       const wasObjectPress = Boolean(
@@ -3131,7 +3335,7 @@
     }
 
     refreshPointerTile() {
-      if (!this.pointerInside || this.backpackOpen || this.workbenchOpen || this.steleOpen || this.mapOpen || this.isDead) return;
+      if (!this.pointerInside || !this.canUseWorldInput()) return;
 
       const tile = this.getPointerTileAt(this.pointerClientX, this.pointerClientY);
       this.pointerTile = tile;
@@ -3147,7 +3351,7 @@
     }
 
     updatePointerTarget() {
-      if (!this.pointerInside || !this.pointerTile || this.backpackOpen || this.workbenchOpen || this.steleOpen || this.mapOpen || this.isDead) {
+      if (!this.pointerInside || !this.pointerTile || !this.canUseWorldInput()) {
         this.hoverTarget = null;
         return;
       }
@@ -3157,7 +3361,7 @@
 
     updateMining(now) {
       if (!this.mining) return;
-      if (this.backpackOpen || this.workbenchOpen || this.steleOpen || this.mapOpen || this.isDead) {
+      if (!this.canUseWorldInput()) {
         this.cancelMining();
         return;
       }
@@ -3205,6 +3409,7 @@
 
     detachPlacedObject(object) {
       this.placedObjects.delete(object.storageKey || Wilds.Buildings.key(object));
+      if (object.type === "respawn_stele") this.activeRespawnSteles.delete(object);
       for (const tile of object.tiles || [{ tx: object.tx, ty: object.ty }]) {
         const key = tile.tx + "," + tile.ty;
         const occupants = this.placedObjectTiles.get(key);
@@ -3226,20 +3431,6 @@
         }
       }
       this.detachPlacedObject(object);
-      if (
-        object.type === "respawn_stele" &&
-        this.respawn &&
-        this.respawn.tx === object.tx &&
-        this.respawn.ty === object.ty
-      ) {
-        let fallback = null;
-        for (const other of this.placedObjects.values()) {
-          if (other.type === "respawn_stele" && other.active) {
-            fallback = { tx: other.tx, ty: other.ty };
-          }
-        }
-        this.respawn = fallback;
-      }
       if (object.type === "storage_chest" && object.storage) {
         for (const stack of object.storage) {
           if (stack) this.spawnDrop(stack.itemId, stack.count, mining.tx, mining.ty, stack.durability, stack.skillReadyAt);
@@ -3400,19 +3591,17 @@
     }
 
     renderTarget() {
+      if (!this.canUseWorldInput()) return null;
       const selected = this.getSelectedStack();
-      if (selected?.item.skill === "portal" && this.pointerInside && !this.paused && !this.isDead && !this.player.portalFrozen &&
-        !this.sleeping && !this.mapOpen && !this.backpackOpen && !this.workbenchOpen && !this.storageOpen && !this.furnaceOpen && !this.steleOpen) {
+      if (selected?.item.skill === "portal" && this.pointerInside && !this.player.portalFrozen) {
         const point = this.getPointerWorldPosition(this.pointerClientX, this.pointerClientY);
         if (point) return { ...this.portalPlan(point.x, point.y), kind: "portal" };
       }
-      if(!this.mining && selected?.item?.throwable==="blg" && this.pointerInside && !this.paused && !this.isDead && !this.mapOpen && !this.backpackOpen && !this.workbenchOpen && !this.storageOpen && !this.furnaceOpen && !this.sleeping) {
+      if (!this.mining && selected?.item?.throwable === "blg" && this.pointerInside) {
         const point=this.getPointerWorldPosition(this.pointerClientX,this.pointerClientY);
         if(point)return {...this.giftPlan(point.x,point.y),kind:"gift"};
       }
-      if (!this.mining && this.pointerInside && this.pointerTile && selected?.item?.placeType &&
-          !this.backpackOpen && !this.workbenchOpen && !this.steleOpen && !this.storageOpen &&
-          !this.furnaceOpen && !this.mapOpen && !this.isDead && !this.sleeping) {
+      if (!this.mining && this.pointerInside && this.pointerTile && selected?.item?.placeType) {
         const { tx, ty } = this.pointerTile;
         const { valid, tiles } = this.placementPlan(selected.item, tx, ty);
         return { tx, ty, kind: "placement", valid, object: {
@@ -3910,12 +4099,10 @@
         valid: (fromMap ? mapAllowed : visible) && tiles.some(tile => !this.isGroundBlockedForCreature(tile.tx, tile.ty)) };
     }
 
-    startPortal(fromMap = false) {
-      const held = this.getHeldEquipment();
-      if (held?.item.skill !== "portal" || this.isDead || this.paused || this.sleeping || this.player.portalFrozen ||
-        (fromMap ? !this.mapOpen : this.mapOpen || !this.pointerInside) ||
-        this.backpackOpen || this.workbenchOpen || this.storageOpen || this.furnaceOpen || this.steleOpen) return false;
-      if (this.holyGunRemaining(held.stack) > 0) { this.showToast("传送法阵冷却中"); return false; }
+    startPortal(fromMap = false, equipped = this.getEquippedSkills().find(skill => skill.item.skill === "portal")) {
+      if (!equipped || this.isDead || this.paused || this.sleeping || this.player.portalFrozen ||
+        (fromMap ? this.activeGamePanel() !== "map" : !this.canUseWorldInput() || !this.pointerInside)) return false;
+      if (this.holyGunRemaining(equipped.stack) > 0) { this.showToast("传送法阵冷却中"); return false; }
       const point = fromMap ? this.mapPortalTarget : this.getPointerWorldPosition(this.pointerClientX, this.pointerClientY);
       if (!point) return false;
       const target = this.portalPlan(point.x, point.y, fromMap);
@@ -3924,9 +4111,7 @@
       const cast = { id: (this.portalSequence = (this.portalSequence || 0) + 1), age: 0, radius: target.radius,
         ends: [{ x: this.player.x, y: this.player.y }, { x: target.x, y: target.y }], selected: [], captured: false, swapped: false, released: false };
       (this.portalEffects ||= []).push(cast);
-      held.stack.skillReadyAt = (this.holyGunTime || 0) + 8;
-      this.cancelMining();
-      this.consumeToolDurability({ area: held.area, index: held.index, itemId: held.item.id });
+      this.useEquippedSkill(equipped, 8);
       this.audio?.playPortalOpen?.();
       return true;
     }
@@ -4082,7 +4267,7 @@
         mob.beached = !water;
         if (mob.beached) {
           mob.moving = false; mob.aggro = false;
-          mob.health = Math.max(0, mob.health - dt * 10);
+          mob.health = Math.max(0, mob.health - dt * 10 * this.mobDamageMultiplier(mob));
           if (mob.health <= 0) this.beginMobDeath(mob, "stranding");
         }
         return; // Aquatic creatures breathe in water and suffocate only on land.
@@ -4093,7 +4278,7 @@
       if (deep) {
         if (mob.oxygen > 0) mob.oxygen = Math.max(0, mob.oxygen - dt * CONFIG.OXYGEN_DRAIN_PER_SECOND);
         else {
-          mob.health = Math.max(0, mob.health - dt * CONFIG.DROWN_DAMAGE_PER_SECOND);
+          mob.health = Math.max(0, mob.health - dt * CONFIG.DROWN_DAMAGE_PER_SECOND * this.mobDamageMultiplier(mob));
           if (mob.health <= 0) this.beginMobDeath(mob, "drowning");
         }
       } else mob.oxygen = Math.min(CONFIG.OXYGEN_MAX, mob.oxygen + dt * CONFIG.OXYGEN_REGEN_PER_SECOND);
@@ -4192,8 +4377,7 @@
       if (daylight) {
         this.applyDaylightDamage(dt);
       }
-      const gazeEnabled = this.pointerInside && !this.paused && !this.isDead && !this.sleeping &&
-        !this.backpackOpen && !this.workbenchOpen && !this.steleOpen && !this.storageOpen && !this.furnaceOpen && !this.mapOpen;
+      const gazeEnabled = this.pointerInside && this.canUseWorldInput();
       const gaze = gazeEnabled ? this.getPointerWorldPosition(this.pointerClientX, this.pointerClientY) : null;
 
       for (let i = this.mobs.length - 1; i >= 0; i -= 1) {
@@ -4309,17 +4493,34 @@
     }
 
     holyGunRemaining(stack) {
-      return Math.max(0,(stack?.skillReadyAt||0)-(this.holyGunTime||0));
+      if (!stack || this.isCreative()) return 0;
+      const shared = this.skillReadyAtByItem?.get(stack.itemId);
+      const deadline = shared && this.inventory.equipment.includes(stack)
+        ? Math.max(shared, stack.skillReadyAt || 0) : stack.skillReadyAt || 0;
+      return Math.max(0, deadline - (this.holyGunTime || 0));
     }
 
-    startHolyGun() {
-      const held=this.getHeldEquipment();
-      if(held?.item.id!=="lucian_holy_gun" || this.player.portalFrozen || this.isDead || this.paused || this.sleeping)return false;
-      if(this.holyGunRemaining(held.stack)>0){this.showToast("圣枪洗礼冷却中");return false;}
+    useEquippedSkill(equipped, cooldown) {
+      this.cancelMining();
+      if (this.isCreative()) return;
+      if (cooldown !== null) this.setSkillCooldown(equipped.item.id, cooldown);
+      this.consumeToolDurability({ area: equipped.area, index: equipped.index, itemId: equipped.item.id });
+    }
+
+    setSkillCooldown(itemId, cooldown) {
+      const readyAt = (this.holyGunTime || 0) + cooldown;
+      (this.skillReadyAtByItem ||= new Map()).set(itemId, readyAt);
+      for (const stack of this.inventory.equipment) {
+        if (stack?.itemId === itemId) stack.skillReadyAt = readyAt;
+      }
+    }
+
+    startHolyGun(equipped = this.getEquippedSkills().find(skill => skill.item.skill === "culling")) {
+      if (!equipped || this.player.portalFrozen || !this.canUseWorldInput()) return false;
+      if(this.holyGunRemaining(equipped.stack)>0){this.showToast("圣枪洗礼冷却中");return false;}
       if(!this.pointerInside){this.showToast("将鼠标移到游戏画面内瞄准");return false;}
-      held.stack.skillReadyAt=(this.holyGunTime||0)+20;
       (this.holyGunCasts ||= []).push({age:0,index:0,times:this.cullingTimes()});
-      this.cancelMining();this.consumeToolDurability({area:held.area,index:held.index,itemId:held.item.id});
+      this.useEquippedSkill(equipped, 20);
       this.updateHolyGun(0);return true;
     }
 
@@ -4393,17 +4594,24 @@
       const tx = Math.floor(mob.x / CONFIG.TILE_SIZE);
       const ty = Math.floor(mob.y / CONFIG.TILE_SIZE);
       if (definition && mob.deathSource !== "sun") {
-        for (const [itemId, count] of definition.drops) {
-          this.spawnDrop(itemId, count, tx, ty);
+        const copies = mob.deathSource === "smite" ? 2 : 1;
+        for (let copy = 0; copy < copies; copy++) {
+          for (const [itemId, count] of definition.drops) {
+            this.spawnDrop(itemId, count, tx, ty);
+          }
         }
       }
       const index = this.mobs.indexOf(mob);
       if (index >= 0) this.mobs.splice(index, 1);
     }
 
+    mobDamageMultiplier(mob) {
+      return this.summoner?.damageMultiplier(mob) ?? 1;
+    }
+
     damageMob(mob, amount, source = "player") {
       if (!mob || mob.dying || mob.portalFrozen) return;
-      mob.health = Math.max(0, mob.health - amount);
+      mob.health = Math.max(0, mob.health - amount * this.mobDamageMultiplier(mob));
       mob.hitFlashUntil = performance.now() + 160;
       if (this.audio) {
         if (mob.monster) this.audio.playMonsterHurt();
@@ -4413,7 +4621,7 @@
       else if(mob.type === "shark") {mob.provoked=true;mob.aggro=this.canMonsterAggro(mob);}
       else if (mob.type === "enderman") {
         // Friendly fire can hurt this mob, but only the player provokes it.
-        if (source === "player") this.provokeEnderman(mob);
+        if (source === "player" || source === "smite") this.provokeEnderman(mob);
       } else if (mob.monster) {
         mob.aggro = this.canMonsterAggro(mob);
       } else {
@@ -4429,10 +4637,12 @@
     }
 
     damagePlayer(amount, attacker = null) {
-      if (this.isCreative() || this.isDead || this.player.portalFrozen) return;
+      if (this.isDead || this.player.portalFrozen) return;
+      const interrupted = this.summoner?.finishTeleport(false);
+      if (this.isCreative() || this.player.summonerShielded) return;
       this.player.takeDamage(amount, { type: attacker ? "monster" : "unknown", name: attacker?.name, monsterType: attacker?.type, skill:attacker?.skill });
       if (this.audio) this.audio.playPlayerHurt();
-      this.showToast("受到 " + amount + " 点伤害");
+      if (!interrupted) this.showToast("受到 " + amount + " 点伤害");
     }
 
     /**

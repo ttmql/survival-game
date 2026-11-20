@@ -36,14 +36,10 @@
       this.oxygen = this.maxOxygen;
       this.maxSatiety = CONFIG.SATIETY_MAX;
       this.satiety = this.maxSatiety;
-      this.manureDietHours = 0;
-      // Poison / slow are measured in in-game hours and drained elsewhere.
-      this.poisonRemainingHours = 0;
-      this.poisonDamageRemaining = 0;
-      this.poisonSources = [];
+      this.clearNegativeEffects();
       this.deathCause = null;
-      this.slowRemainingHours = 0;
-      this.speedFactor = 1;
+      this.summonerSpeedFactor = 1;
+      this.summonerShielded = false;
       // Base unarmed damage; the game adds the held weapon's attackBonus.
       this.baseAttackDamage = 5;
       this.attackDamage = this.baseAttackDamage;
@@ -94,7 +90,8 @@
       dx /= length;
       dy /= length;
 
-      const targetSpeed = (sprinting ? CONFIG.PLAYER_SPRINT_SPEED : CONFIG.PLAYER_SPEED) * this.speedFactor * (this.creative && this.fastTravel ? 5 : 1);
+      const targetSpeed = (sprinting ? CONFIG.PLAYER_SPRINT_SPEED : CONFIG.PLAYER_SPEED) *
+        this.speedFactor * this.summonerSpeedFactor * (this.creative && this.fastTravel ? 5 : 1);
       this.speed = targetSpeed;
 
       // Resolve axes independently so the player can slide along a tree.
@@ -181,10 +178,19 @@
     // Poison stacks by extending duration and adding total damage, which is
     // then spread evenly across the remaining hours in updateEffects.
     takeDamage(amount, cause = { type: "unknown" }) {
-      if (this.creative || this.portalFrozen || this.health <= 0 || !Number.isFinite(amount) || amount <= 0) return;
+      if (this.creative || this.portalFrozen || this.summonerShielded || this.health <= 0 || !Number.isFinite(amount) || amount <= 0) return;
       this.health = Math.max(0, this.health - amount);
       // Freeze the actual lethal source; later damage cannot overwrite it.
       if (this.health <= 0) this.deathCause = { ...cause };
+    }
+
+    clearNegativeEffects() {
+      this.manureDietHours = 0;
+      this.poisonRemainingHours = 0;
+      this.poisonDamageRemaining = 0;
+      this.poisonSources = [];
+      this.slowRemainingHours = 0;
+      this.speedFactor = 1;
     }
 
     applyPoison(damage, gameHours, source = null) {
